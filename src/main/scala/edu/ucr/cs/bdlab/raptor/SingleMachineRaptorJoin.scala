@@ -59,20 +59,20 @@ object SingleMachineRaptorJoin {
     Statistics( min, max, median, sum, mode, stdev, count, mean )
   }
 
-  def zonalStatistics(rasterFileNames: Array[String], geomArray: Array[Geometry]): Array[Statistics] = {
+  def zonalStatistics(rasterFileNames: Array[String], geomArray: Array[Geometry]): Array[(Int, Statistics)] = {
     val values: Iterator[(Long, Float)] = raptorJoin(rasterFileNames, geomArray)
     // Custom function to process iterator and group by key
-    def processIterator(values: Iterator[(Long, Float)]): Iterator[Statistics] = new Iterator[Statistics] {
+    def processIterator(values: Iterator[(Long, Float)]): Iterator[(Int, Statistics)] = new Iterator[(Int, Statistics)] {
       // Peekable iterator to check ahead without consuming the element
       val peekableValues = values.buffered
 
       override def hasNext: Boolean = peekableValues.hasNext
 
-      override def next(): Statistics = {
+      override def next(): (Int, Statistics) = {
         if (!hasNext) throw new NoSuchElementException("next on empty iterator")
         val currentKey = peekableValues.head._1
         val group = peekableValues.takeWhile(_._1 == currentKey).map(_._2).toList
-        statistics(group)
+        (currentKey.toInt, statistics(group))
       }
     }
 
@@ -108,7 +108,7 @@ object SingleMachineRaptorJoin {
   }
 
   // join function
-  def zonalStatistics(rasterPath: String, geomArray: Array[Geometry]): Array[Statistics] =
+  def zonalStatistics(rasterPath: String, geomArray: Array[Geometry]): Array[(Int, Statistics)] =
     zonalStatistics(Array(rasterPath), geomArray)
 
 }

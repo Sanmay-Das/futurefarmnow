@@ -98,7 +98,7 @@ class SoilServlet extends AbstractWebHandler with Logging {
     val matchingFiles = matchingRasterDirs.flatMap(matchingRasterDir =>
       RasterFileRDD.selectFiles(fileSystem, matchingRasterDir, geom))
     logDebug(s"Query matched ${matchingFiles.length} files")
-    val singleMachineResults: SingleMachineRaptorJoin.Statistics = SingleMachineRaptorJoin.zonalStatistics(matchingFiles, Array(geom))(0)
+    val singleMachineResults: SingleMachineRaptorJoin.Statistics = SingleMachineRaptorJoin.zonalStatistics(matchingFiles, Array(geom))(0)._2
 
     // Write result to json object
     val resWriter = response.getWriter
@@ -183,7 +183,7 @@ class SoilServlet extends AbstractWebHandler with Logging {
     // load raster data based on selected soil depth and layer// load raster data based on selected soil depth and layer
     val matchingRasterDirs: Array[String] = rasterFiles
       .filter(rasterFile => SoilServlet.rangeOverlap(rasterFile._1, soilDepth))
-      .map(rasterFile => s"data/tif/${rasterFile._2}/$layer.tif")
+      .map(rasterFile => s"data/POLARIS/$layer/${rasterFile._2}")
       .toArray
 
     val matchingRasterFiles = if (mbr != null) {
@@ -199,7 +199,8 @@ class SoilServlet extends AbstractWebHandler with Logging {
     logDebug(s"Query matched ${matchingRasterFiles.length} files")
 
     // Load raster data// Load raster data
-    val finalResults = SingleMachineRaptorJoin.zonalStatistics(matchingRasterFiles, farmlands.map(_.getGeometry))
+    val finalResults: Array[(Int, SingleMachineRaptorJoin.Statistics)] =
+      SingleMachineRaptorJoin.zonalStatistics(matchingRasterFiles, farmlands.map(_.getGeometry))
 
     // write results to json object// write results to json object
     val out = response.getWriter
@@ -225,19 +226,17 @@ class SoilServlet extends AbstractWebHandler with Logging {
     val resultsNode = mapper.createArrayNode
 
     // populate json object with max vals
-    for (i <- finalResults.indices) {
-      val s = finalResults(i)
-      if (s != null) {
-        val resultNode = mapper.createObjectNode
-        resultNode.put("objectid", farmlands(i).getAs("OBJECTID").asInstanceOf[Number].longValue)
-        resultNode.put("min", s.min)
-        resultNode.put("max", s.max)
-        resultNode.put("average", s.mean)
-        resultNode.put("count", s.count)
-        resultNode.put("stdev", s.stdev)
-        resultNode.put("median", s.median);
-        resultsNode.add(resultNode)
-      }
+    for ((i, s) <- finalResults; if s != null) {
+      val farmland = farmlands(i)
+      val resultNode = mapper.createObjectNode
+      resultNode.put("objectid", farmland.getAs("OBJECTID").asInstanceOf[Number].longValue)
+      resultNode.put("min", s.min)
+      resultNode.put("max", s.max)
+      resultNode.put("average", s.mean)
+      resultNode.put("count", s.count)
+      resultNode.put("stdev", s.stdev)
+      resultNode.put("median", s.median)
+      resultsNode.add(resultNode)
     }
 
     // create root node// create root node
