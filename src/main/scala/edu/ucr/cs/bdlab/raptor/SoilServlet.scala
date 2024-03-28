@@ -7,13 +7,17 @@ import edu.ucr.cs.bdlab.beast.indexing.RTreeFeatureReader
 import edu.ucr.cs.bdlab.beast.io.{GeoJSONFeatureReader, SpatialFileRDD}
 import edu.ucr.cs.bdlab.beast.util.AbstractWebHandler
 import org.apache.commons.io.IOUtils
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.hadoop.mapreduce.lib.input.FileSplit
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.SparkSession
 import org.locationtech.jts.geom.{Envelope, Geometry, GeometryFactory}
 
+import java.awt.Color
+import java.awt.image.BufferedImage
 import java.io.{ByteArrayInputStream, ByteArrayOutputStream}
+import javax.imageio.ImageIO
 import javax.servlet.http.{HttpServletRequest, HttpServletResponse}
 import scala.collection.JavaConverters.asScalaIteratorConverter
 
@@ -53,7 +57,7 @@ class SoilServlet extends AbstractWebHandler with Logging {
 
   @WebMethod(url = "/soil/singlepolygon.json", order = 1)
   def singlePolygon(path: String, request: HttpServletRequest, response: HttpServletResponse): Boolean = {
-    // sidebar select parameters// sidebar select parameters
+    // sidebar select parameters
     var soilDepth = ""
     var layer = ""
 
@@ -98,7 +102,12 @@ class SoilServlet extends AbstractWebHandler with Logging {
     val matchingFiles = matchingRasterDirs.flatMap(matchingRasterDir =>
       RasterFileRDD.selectFiles(fileSystem, matchingRasterDir, geom))
     logDebug(s"Query matched ${matchingFiles.length} files")
-    val singleMachineResults: SingleMachineRaptorJoin.Statistics = SingleMachineRaptorJoin.zonalStatistics(matchingFiles, Array(geom))(0)._2
+    val singleMachineResults: Array[(Int, SingleMachineRaptorJoin.Statistics)] = SingleMachineRaptorJoin.zonalStatistics(matchingFiles, Array(geom))
+    val statistics: SingleMachineRaptorJoin.Statistics = if (singleMachineResults == null || singleMachineResults.isEmpty) {
+      SingleMachineRaptorJoin.emptyStatistics
+    } else {
+      singleMachineResults(0)._2
+    }
 
     // Write result to json object
     val resWriter = response.getWriter
@@ -112,14 +121,14 @@ class SoilServlet extends AbstractWebHandler with Logging {
     // create results node// create results node
     val resultsNode = mapper.createObjectNode
     if (singleMachineResults != null) {
-      resultsNode.put("min", singleMachineResults.min)
-      resultsNode.put("max", singleMachineResults.max)
-      resultsNode.put("median", singleMachineResults.median)
-      resultsNode.put("sum", singleMachineResults.sum)
-      resultsNode.put("mode", singleMachineResults.mode)
-      resultsNode.put("stddev", singleMachineResults.stdev)
-      resultsNode.put("count", singleMachineResults.count)
-      resultsNode.put("mean", singleMachineResults.mean)
+      resultsNode.put("min", statistics.min)
+      resultsNode.put("max", statistics.max)
+      resultsNode.put("median", statistics.median)
+      resultsNode.put("sum", statistics.sum)
+      resultsNode.put("mode", statistics.mode)
+      resultsNode.put("stddev", statistics.stdev)
+      resultsNode.put("count", statistics.count)
+      resultsNode.put("mean", statistics.mean)
     }
 
     // create root node// create root node
@@ -143,7 +152,7 @@ class SoilServlet extends AbstractWebHandler with Logging {
     response.setContentType("application/json")
     response.setStatus(HttpServletResponse.SC_OK)
 
-    // Load the Farmland features// Load the Farmland features
+    // Load the Farmland features
     val indexPath = new Path(VectorServlet.getIndexPathById(VectorServlet.VectorIndexFile, datasetID))
     val reader = new RTreeFeatureReader
     val fs = indexPath.getFileSystem(sparkSession.sparkContext.hadoopConfiguration)
@@ -249,6 +258,102 @@ class SoilServlet extends AbstractWebHandler with Logging {
     val jsonString = mapper.writer.writeValueAsString(rootNode)
     out.print(jsonString)
     out.flush()
+    true
+  }
+
+  @WebMethod(url = "/soil/image.png", order = 1)
+  def soilImage(path: String, request: HttpServletRequest, response: HttpServletResponse): Boolean = {
+    // sidebar select parameters
+    var soilDepth = ""
+    var layer = ""
+
+    // try getting parameters from url
+    try {
+      soilDepth = request.getParameter("soildepth")
+      layer = request.getParameter("layer")
+    } catch {
+      case e: NullPointerException => throw new RuntimeException("Couldn't find the required parameters: soildepth and layer")
+    }
+
+    // load raster data based on selected soil depth and layer// load raster data based on selected soil depth and layer
+    val matchingRasterDirs: Array[String] = rasterFiles
+      .filter(rasterFile => SoilServlet.rangeOverlap(rasterFile._1, soilDepth))
+      .map(rasterFile => s"data/POLARIS/$layer/${rasterFile._2}")
+      .toArray
+
+    val baos = new ByteArrayOutputStream
+    val input = request.getInputStream
+    IOUtils.copy(input, baos)
+    input.close()
+    baos.close()
+    val geoJSONData: Array[Byte] = baos.toByteArray
+    var geom: Geometry = null
+    try {
+      val jsonParser = new JsonFactory().createParser(new ByteArrayInputStream(geoJSONData))
+      geom = GeoJSONFeatureReader.parseGeometry(jsonParser)
+      geom.setSRID(4326)
+      jsonParser.close()
+    } catch {
+      case e: Exception =>
+        logError(s"Error parsing GeoJSON geometry ${new String(geoJSONData)}", e)
+        throw new RuntimeException(s"Error parsing query geometry ${new String(geoJSONData)}", e)
+    }
+
+    // Now that we have a geometry object, call single machine raptor join to retrieve all pixels in the query polygon
+    val fileSystem = new Path(dataPath).getFileSystem(sparkSession.sparkContext.hadoopConfiguration)
+    val matchingFiles = matchingRasterDirs.flatMap(matchingRasterDir =>
+      RasterFileRDD.selectFiles(fileSystem, matchingRasterDir, geom))
+    logDebug(s"Query matched ${matchingFiles.length} files")
+
+    val intersections: Array[(Int, Intersections)] = matchingFiles.zipWithIndex.map({ case (rasterFileName: String, index: Int) =>
+      val rasterFS: FileSystem = new Path(rasterFileName).getFileSystem(new Configuration())
+      val rasterReader = RasterHelper.createRasterReader(rasterFS, new Path(rasterFileName), new BeastOptions())
+      val intersections = new Intersections()
+      intersections.compute(Array(geom), rasterReader.metadata)
+      rasterReader.close()
+      (index, intersections)
+    }).filter(_._2.getNumIntersections > 0)
+    if (intersections.isEmpty)
+      return false
+    val intersectionIterator: Iterator[(Long, PixelRange)] = new IntersectionsIterator(intersections.map(_._1), intersections.map(_._2))
+    val pixels: Array[RaptorJoinResult[Float]] = new PixelIterator[Float](intersectionIterator, matchingFiles, "0").toArray
+
+    // Arrange the pixels in an image
+    val targetImage: BufferedImage = if (matchingFiles.length == 1) {
+      // If all pixels belong to one file, we can just arrange them based on their pixel location
+      var minX: Int = Int.MaxValue
+      var minY: Int = Int.MaxValue
+      var maxX: Int = -1
+      var maxY: Int = -1
+      var minM: Float = Float.PositiveInfinity
+      var maxM: Float = Float.NegativeInfinity
+      for (pixel <- pixels) {
+        minX = minX min pixel.x
+        maxX = maxX max pixel.x
+        minY = minY min pixel.y
+        maxY = maxY max pixel.y
+        minM = minM min pixel.m
+        maxM = maxM max pixel.m
+      }
+      val image = new BufferedImage(maxX - minX + 1, maxY - minY + 1, BufferedImage.TYPE_INT_ARGB)
+      for (pixel <- pixels) {
+        val scale: Int = ((pixel.m - minM) * 255 / (maxM - minM)).toInt
+        val color = new Color(scale, scale, scale)
+        image.setRGB(pixel.x - minX, pixel.y - minY, color.getRGB)
+      }
+      image
+    } else {
+      // TODO combine pixels into a single image by reprojecting all pixels
+      val targetImage = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB)
+      throw new RuntimeException("Not yet supported")
+    }
+    // Return the resulting image
+    // set content-type as application/json
+    response.setContentType("image/png")
+    response.setStatus(HttpServletResponse.SC_OK)
+    val out = response.getOutputStream
+    ImageIO.write(targetImage, "png", out)
+    out.close()
     true
   }
 }

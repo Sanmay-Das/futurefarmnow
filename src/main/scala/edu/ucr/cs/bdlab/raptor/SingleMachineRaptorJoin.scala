@@ -24,6 +24,8 @@ object SingleMachineRaptorJoin {
 
   case class Statistics(min: Float, max: Float, median: Float, sum: Float, mode: Float, stdev: Float, count: Long, mean: Float)
 
+  val emptyStatistics = Statistics(Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, 0, Float.NaN)
+
   /**
    * Compute the desired statistics for the given list of values. The computed statistics are (in order):
    *

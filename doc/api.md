@@ -179,6 +179,46 @@ Currently, the accepted values for from and to are {0, 5, 15, 30, 60, 100, 200} 
 }
 ```
 
+## Get soil image for a region
+
+Get an image of soil statistics in a region defined by a GeoJSON geometry.
+
+| Endpoint     | `/soil/image.png`       |
+|--------------|-------------------------|
+| HTTP method  | GET/POST                |
+| POST payload | GeoJSON geometry object |
+| Since        | 0.3                     |
+
+| Parameter | Required? | How to use                                                                                                           | Description                           |
+|-----------|-----------|----------------------------------------------------------------------------------------------------------------------|---------------------------------------|
+| soildepth | Required  | ?soildepth=from-to                                                                                                   | Soil depth on which to run statistics |
+| layer     | Required  | Accepted values: "alpha", "bd", "clay", "hb", "ksat", "lambda", "n", "om", "ph", "sand", "silt","theta_r", "theta_s" | Soil parameter to consider            |
+
+*Note*: GET is the preferred HTTP method for this service since it does not modify the state of the server and its caching will be handled better by the client. However, since some SDKs do not support a payload for GET requests, the POST method is also supported for compatibility.
+
+*Note*: The parameter `soildepth` is provided as a range in the format `from-to`.
+Currently, the accepted values for from and to are {0, 5, 15, 30, 60, 100, 200} and `from` must be less than `to`.
+
+### Examples
+#### URL
+<https://raptor.cs.ucr.edu/futurefarmnow-backend-0.3-RC1/soil/image.png?soildepth=0-5&layer=alpha>
+
+#### GET/POST payload
+```json
+{"type" : "Polygon",  "coordinates" : [ [ [ -120.11975251694177, 36.90564006418889 ], [ -120.12409234994458, 36.90565751854381 ], [ -120.12406217104261, 36.90824957916899 ], [ -120.12410082465097, 36.90918197014845 ], [ -120.12405123315573, 36.90918899854245 ], [ -120.11974725371255, 36.9091820470047 ], [ -120.11975251694177, 36.90564006418889 ] ] ] }
+```
+
+#### Example with cUrl
+```shell
+cat > test.geojson
+{"type" : "Polygon",  "coordinates" : [ [ [ -120.11975251694177, 36.90564006418889 ], [ -120.12409234994458, 36.90565751854381 ], [ -120.12406217104261, 36.90824957916899 ], [ -120.12410082465097, 36.90918197014845 ], [ -120.12405123315573, 36.90918899854245 ], [ -120.11874725371255, 36.9091820470047 ], [ -120.11975251694177, 36.90564006418889 ] ] ]  }
+^D
+curl -X GET "http://raptor.cs.ucr.edu/futurefarmnow-backend-0.3-RC1/soil/image.png?soildepth=0-5&layer=alpha" -H "Content-Type: application/geo+json" -d @test.geojson
+```
+
+#### Response
+![Soil image sample result](images/soil-image.png)
+
 ## Get NDVI for a single farmland
 
 Get NDVI time series for a single geometry defined by GeoJSON. The output is in JSON format.
