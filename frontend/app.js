@@ -1,5 +1,6 @@
 const { useState, useEffect, useRef } = React;
-const baseURL = ""
+//const baseURL = "/"
+const baseURL = "/futurefarmnow-backend-0.3-RC1/"
 
 const calculateLegendRanges = (globalMin, globalMax) => {
     const range = globalMax - globalMin;
@@ -284,7 +285,6 @@ function App() {
                 if (soilStat) {
                     // Calculate color based on soilStat.value
                     const value = soilStat.average
-                    console.log("Value", value);
                     const color = valueToColor(value, globalMin, globalMax);
 
                     // Apply style to feature
