@@ -63,7 +63,8 @@ function App() {
     const mapRef = useRef(null); // Use useRef to hold the map instance
     const vectorLayerRef = useRef(null); // Reference to the vector layer for drawings
     const [drawnGeometry, setDrawnGeometry] = useState(null); // For storing the drawn polygon geometry
-    const [soilDepth, setSoilDepth] = useState('0-5'); // Default value
+    const [minSoilDepth, setMinSoilDepth] = useState('0');
+    const [maxSoilDepth, setMaxSoilDepth] = useState('60'); // Default max depth value
     const [layer, setLayer] = useState('alpha'); // Default layer
     const [queryResults, setQueryResults] = useState(null); // To store the query results
     const [legendRanges, setLegendRanges] = useState([]); // To store the query results
@@ -167,6 +168,11 @@ function App() {
     const handleQuerySubmit = async (e) => {
         e.preventDefault(); // Prevent the default form submission behavior
 
+        if (parseInt(minSoilDepth) >= parseInt(maxSoilDepth)) {
+            alert("Min soil depth must be less than max soil depth.");
+            return; // Prevent the form submission
+        }
+
         // Prepare the GeoJSON object from the drawn geometry
         const geoJson = {
             type: 'Polygon',
@@ -174,7 +180,7 @@ function App() {
         };
 
         // Construct the API URL
-        const apiUrl = `${baseURL}soil/singlepolygon.json?soildepth=${soilDepth}&layer=${layer}`;
+        const apiUrl = `${baseURL}soil/singlepolygon.json?soildepth=${minSoilDepth}-${maxSoilDepth}&layer=${layer}`;
 
         try {
             const response = await fetch(apiUrl, {
@@ -198,7 +204,7 @@ function App() {
         const { minx, miny, maxx, maxy } = calculatePolygonExtents(drawnGeometry);
 
         // Assuming soilDepth and layer state variables hold the current selections
-        const soilImageUrl = `${baseURL}soil/image.png?soildepth=${soilDepth}&layer=${layer}&minx=${minx}&miny=${miny}&maxx=${maxx}&maxy=${maxy}`;
+        const soilImageUrl = `${baseURL}soil/image.png?soildepth=${minSoilDepth}-${maxSoilDepth}&layer=${layer}&minx=${minx}&miny=${miny}&maxx=${maxx}&maxy=${maxy}`;
 
         try {
             const response = await fetch(soilImageUrl, {
@@ -244,7 +250,7 @@ function App() {
         const [minx, miny, maxx, maxy] = ol.proj.transformExtent(extent, projection, 'EPSG:4326');
 
         // Soil query URL setup
-        const soilQueryUrl = `${baseURL}soil/${selectedVectorId}.json?minx=${minx}&miny=${miny}&maxx=${maxx}&maxy=${maxy}&soildepth=0-5&layer=alpha`;
+        const soilQueryUrl = `${baseURL}soil/${selectedVectorId}.json?minx=${minx}&miny=${miny}&maxx=${maxx}&maxy=${maxy}&soildepth=${minSoilDepth}-${maxSoilDepth}&layer=alpha`;
         // Vector data URL setup
         const vectorDataUrl = `${baseURL}vectors/${selectedVectorId}.geojson?minx=${minx}&miny=${miny}&maxx=${maxx}&maxy=${maxy}`;
 
@@ -313,28 +319,43 @@ function App() {
     return (
         <div className="container">
             <div className="sidebar">
+                {/* Logo */}
+                <div className="logo" title="FutureFarmNow">
+                  <img src="future_farm_now_logo.png" alt="FutureFarmNow Logo" />
+                </div>
+
+                <label>Farmlands:
                 <select onChange={handleVectorSelection}>
                     <option value="">Select a dataset</option>
                     {vectors.map(vector => (
                         <option key={vector.id} value={vector.id}>{vector.title}</option>
                     ))}
                 </select>
+                </label>
 
                 {/* Form for submitting a soil query */}
                 <form onSubmit={handleQuerySubmit}>
                     <div>
-                        <label htmlFor="soilDepth">Soil Depth: </label>
-                        <select id="soilDepth" value={soilDepth} onChange={(e) => setSoilDepth(e.target.value)}>
-                            <option value="0-5">0-5 cm</option>
-                            <option value="5-15">5-15 cm</option>
-                            <option value="15-30">15-30 cm</option>
-                            <option value="30-60">30-60 cm</option>
-                            <option value="60-100">60-100 cm</option>
-                            <option value="100-200">100-200 cm</option>
+                        <label>Soil Depth:
+                        <select id="minSoilDepth" value={minSoilDepth} onChange={(e) => setMinSoilDepth(e.target.value)}>
+                            <option value="0">0 cm</option>
+                            <option value="5">5 cm</option>
+                            <option value="15">15 cm</option>
+                            <option value="30">30 cm</option>
+                            <option value="60">60 cm</option>
+                            <option value="100">100 cm</option>
+                        </select></label> -
+                        <select id="maxSoilDepth" value={maxSoilDepth} onChange={(e) => setMaxSoilDepth(e.target.value)}>
+                            <option value="5">5 cm</option>
+                            <option value="15">15 cm</option>
+                            <option value="30">30 cm</option>
+                            <option value="60">60 cm</option>
+                            <option value="100">100 cm</option>
+                            <option value="200">200 cm</option>
                         </select>
                     </div>
                     <div>
-                        <label htmlFor="layer">Layer: </label>
+                        <label>Soil Layer:
                         <select id="layer" value={layer} onChange={(e) => setLayer(e.target.value)}>
                             <option value="alpha">alpha</option>
                             <option value="bd">bd</option>
@@ -350,6 +371,7 @@ function App() {
                             <option value="theta_r">theta_r</option>
                             <option value="theta_s">theta_s</option>
                         </select>
+                        </label>
                     </div>
                     <button type="submit">Run Soil Query</button>
                 </form>
