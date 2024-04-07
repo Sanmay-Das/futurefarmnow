@@ -22,9 +22,9 @@ import org.locationtech.jts.geom.Geometry
 
 object SingleMachineRaptorJoin {
 
-  case class Statistics(min: Float, max: Float, median: Float, sum: Float, mode: Float, stdev: Float, count: Long, mean: Float)
+  case class Statistics(min: Float, max: Float, median: Float, sum: Float, mode: Float, stdev: Float, count: Long, mean: Float, lowerQuart: Float, upperQuart: Float)
 
-  val emptyStatistics = Statistics(Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, 0, Float.NaN)
+  val emptyStatistics = Statistics(Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, 0, Float.NaN, Float.NaN, Float.NaN)
 
   /**
    * Compute the desired statistics for the given list of values. The computed statistics are (in order):
@@ -37,6 +37,8 @@ object SingleMachineRaptorJoin {
    *  - stddev
    *  - count
    *  - average (mean)
+   *  - Lower quartile (25%)
+   *  - Upper quartile (75%)
    *
    * @param inputList the list of values ot compute the statistics for
    * @return
@@ -57,8 +59,10 @@ object SingleMachineRaptorJoin {
     } else {
       sortedValues(count / 2)
     }
+    val lowerQuart: Float = sortedValues(sortedValues.length / 4)
+    val upperQuart: Float = sortedValues(sortedValues.length * 3 / 4)
 
-    Statistics( min, max, median, sum, mode, stdev, count, mean )
+    Statistics( min, max, median, sum, mode, stdev, count, mean, lowerQuart, upperQuart)
   }
 
   def zonalStatistics(rasterFileNames: Array[String], geomArray: Array[Geometry]): Array[(Int, Statistics)] = {

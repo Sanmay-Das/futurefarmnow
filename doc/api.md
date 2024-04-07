@@ -130,7 +130,7 @@ curl -X GET "http://raptor.cs.ucr.edu/futurefarmnow-backend-0.2-RC1/soil/singlep
 
 #### Response
 ```json
-{"query":{"soildepth":"0-5","layer":"alpha"},"results":{"max":-0.24714702,"min":-0.25878787,"sum":-0.24714702,"median":-48.268135,"stddev":-0.25208578,"count":195,"mean":-0.2475289}}
+{"query":{"soildepth":"0-5","layer":"alpha"},"results":{"max":-0.24714702,"min":-0.25878787,"sum":-0.24714702,"median":-48.268135,"stddev":-0.25208578,"count":195,"mean":-0.2475289,"lowerquart":-0.25,"upperquart": -0.23}}
 ```
 
 ## Get soil statistics for all farmlands in a region

@@ -26,15 +26,14 @@ function valueToColor(value, globalMin, globalMax) {
 
 const BoxAndWhiskerPlot = ({ results }) => {
     // Check if results are not null and contain necessary data
-    if (!results || typeof results.min === 'undefined' || typeof results.max === 'undefined' || typeof results.mean === 'undefined' || typeof results.median === 'undefined') {
+    if (!results || typeof results.min === 'undefined' || typeof results.max === 'undefined' || typeof results.mean === 'undefined' || typeof results.median === 'undefined' || typeof results.lowerquart === 'undefined' || typeof results.upperquart === 'undefined') {
         // Optionally, return a message or null if the data is insufficient
         return <div>No data available for plot.</div>;
     }
 
-
     const svgWidth = 200; // Adjust as needed
     const svgHeight = 100; // Adjust as needed
-    const { min, max, mean, median } = results;
+    const { min, max, mean, median, lowerquart, upperquart } = results;
 
     // Calculate scale based on data range
     const padding = 20; // Padding to avoid drawing on the edge
@@ -43,16 +42,23 @@ const BoxAndWhiskerPlot = ({ results }) => {
 
     return (
         <svg width={svgWidth} height={svgHeight} style={{ border: '1px solid #ccc', display: 'block', margin: '0 auto' }}>
-            <line x1={scale(min)} y1="50" x2={scale(max)} y2="50" stroke="black" />
+            {/* Whiskers */}
+            <line x1={scale(min)} y1="50" x2={scale(lowerquart)} y2="50" stroke="black" />
+            <line x1={scale(upperquart)} y1="50" x2={scale(max)} y2="50" stroke="black" />
             <line x1={scale(min)} y1="40" x2={scale(min)} y2="60" stroke="black" />
-            <text x={scale(min)} y="75" fontSize="10" textAnchor="middle">{min.toFixed(2)}</text>
             <line x1={scale(max)} y1="40" x2={scale(max)} y2="60" stroke="black" />
-            <text x={scale(max)} y="75" fontSize="10" textAnchor="middle">{max.toFixed(2)}</text>
-            <rect x={scale(Math.min(mean, median))} y="30" width={Math.abs(scale(mean) - scale(median))} height="40" fill="grey" />
-            <circle cx={scale(mean)} cy="50" r="5" fill="red" />
-            <text x={scale(mean)} y="20" fontSize="10" textAnchor="middle">{mean.toFixed(2)}</text>
-            <circle cx={scale(median)} cy="50" r="5" fill="blue" />
-            <text x={scale(median)} y="90" fontSize="10" textAnchor="middle">{median.toFixed(2)}</text>
+
+            {/* Box */}
+            <rect x={scale(lowerquart)} y="30" width={scale(upperquart) - scale(lowerquart)} height="40" fill="grey" />
+            {/* Median Line */}
+            <line x1={scale(median)} y1="30" x2={scale(median)} y2="70" stroke="blue" strokeWidth="2" />
+
+            {/* Text */}
+            <text x={scale(min)} y="75" fontSize="10" textAnchor="middle">{`Min ${min.toFixed(2)}`}</text>
+            <text x={scale(max)} y="75" fontSize="10" textAnchor="middle">{`Max ${max.toFixed(2)}`}</text>
+            <text x={scale(lowerquart)} y="20" fontSize="10" textAnchor="middle">{`${lowerquart.toFixed(2)}`}</text>
+            <text x={scale(upperquart)} y="20" fontSize="10" textAnchor="middle">{`${upperquart.toFixed(2)}`}</text>
+            <text x={scale(median)} y="85" fontSize="10" textAnchor="middle">{`Median ${median.toFixed(2)}`}</text>
         </svg>
     );
 };
@@ -204,7 +210,7 @@ function App() {
         const { minx, miny, maxx, maxy } = calculatePolygonExtents(drawnGeometry);
 
         // Assuming soilDepth and layer state variables hold the current selections
-        const soilImageUrl = `${baseURL}soil/image.png?soildepth=${minSoilDepth}-${maxSoilDepth}&layer=${layer}&minx=${minx}&miny=${miny}&maxx=${maxx}&maxy=${maxy}`;
+        const soilImageUrl = `${baseURL}soil/image.png?soildepth=${minSoilDepth}-${maxSoilDepth}&layer=${layer}`;
 
         try {
             const response = await fetch(soilImageUrl, {
@@ -250,7 +256,7 @@ function App() {
         const [minx, miny, maxx, maxy] = ol.proj.transformExtent(extent, projection, 'EPSG:4326');
 
         // Soil query URL setup
-        const soilQueryUrl = `${baseURL}soil/${selectedVectorId}.json?minx=${minx}&miny=${miny}&maxx=${maxx}&maxy=${maxy}&soildepth=${minSoilDepth}-${maxSoilDepth}&layer=alpha`;
+        const soilQueryUrl = `${baseURL}soil/${selectedVectorId}.json?minx=${minx}&miny=${miny}&maxx=${maxx}&maxy=${maxy}&soildepth=${minSoilDepth}-${maxSoilDepth}&layer=${layer}`;
         // Vector data URL setup
         const vectorDataUrl = `${baseURL}vectors/${selectedVectorId}.geojson?minx=${minx}&miny=${miny}&maxx=${maxx}&maxy=${maxy}`;
 

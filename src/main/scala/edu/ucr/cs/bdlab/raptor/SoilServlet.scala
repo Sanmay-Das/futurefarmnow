@@ -129,6 +129,8 @@ class SoilServlet extends AbstractWebHandler with Logging {
       resultsNode.put("stddev", statistics.stdev)
       resultsNode.put("count", statistics.count)
       resultsNode.put("mean", statistics.mean)
+      resultsNode.put("lowerquart", statistics.lowerQuart)
+      resultsNode.put("upperquart", statistics.upperQuart)
     }
 
     // create root node// create root node
