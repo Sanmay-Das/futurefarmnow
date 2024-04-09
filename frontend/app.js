@@ -1,13 +1,13 @@
 const { useState, useEffect, useRef } = React;
-//const baseURL = "/"
-const baseURL = "/futurefarmnow-backend-0.3-RC1/"
+const baseURL = "/"
+//const baseURL = "/futurefarmnow-backend-0.3-RC1/"
 
-const calculateLegendRanges = (globalMin, globalMax) => {
+const calculateLegendRanges = (globalMin, globalMax, numRanges) => {
     const range = globalMax - globalMin;
-    const step = range / 5; // Divide the total range into 5 steps
+    const step = range / numRanges;
     const legendRanges = [];
 
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < numRanges; i++) {
         const minValue = globalMin + step * i;
         const maxValue = minValue + step;
         const color = valueToColor((minValue + maxValue) / 2, globalMin, globalMax); // Color based on the midpoint
@@ -22,6 +22,22 @@ function valueToColor(value, globalMin, globalMax) {
     const normalized = (value - globalMin) / (globalMax - globalMin);
     const intensity = Math.round(normalized * 255);
     return `rgb(${intensity}, ${intensity}, ${intensity})`;
+}
+
+const Legend = ({ legendRanges}) => {
+  console.log("legend ranges", legendRanges);
+  if (legendRanges === 'undefined' || legendRanges.length == 0)
+    return null;
+  return (
+    <div className="legend">
+        <h3>Soil Value Legend</h3>
+        {legendRanges.map((entry, index) => (
+            <div className="entry" key={index}>
+                <div className="key" style={{backgroundColor: entry.color}}></div>
+                <span>{entry.range}</span>
+            </div>
+        ))}
+    </div>);
 }
 
 const BoxAndWhiskerPlot = ({ results }) => {
@@ -200,7 +216,7 @@ function App() {
             setQueryResults(data); // Store the results in state
 
             // Update the legend based on these new min and max values
-            const newLegendRanges = calculateLegendRanges(data.results.min, data.results.max);
+            const newLegendRanges = calculateLegendRanges(data.results.min, data.results.max, 5);
             setLegendRanges(newLegendRanges);
         } catch (error) {
             console.error('Error fetching soil statistics:', error);
@@ -285,7 +301,7 @@ function App() {
 
             // After determining globalMin and globalMax
             // Assuming you have a state variable set up to hold the legend values
-            setLegendRanges(calculateLegendRanges(globalMin, globalMax));
+            setLegendRanges(calculateLegendRanges(globalMin, globalMax, 5));
 
             // Now, use soilData and vectorData to create a Choropleth map
             // This part depends on how you plan to visualize the data, which might involve updating an existing map layer or creating a new one
@@ -300,7 +316,6 @@ function App() {
                     const color = valueToColor(value, globalMin, globalMax);
 
                     // Apply style to feature
-                    // This assumes you're using OpenLayers for mapping; adjust according to your mapping library
                     const style = new ol.style.Style({
                         fill: new ol.style.Fill({color: color}),
                         stroke: new ol.style.Stroke({color: '#000', width: 1})
@@ -363,19 +378,19 @@ function App() {
                     <div>
                         <label>Soil Layer:
                         <select id="layer" value={layer} onChange={(e) => setLayer(e.target.value)}>
-                            <option value="alpha">alpha</option>
-                            <option value="bd">bd</option>
-                            <option value="clay">clay</option>
-                            <option value="hb">hb</option>
-                            <option value="ksat">ksat</option>
-                            <option value="lambda">lambda</option>
-                            <option value="n">n</option>
-                            <option value="om">om</option>
-                            <option value="ph">ph</option>
-                            <option value="sand">sand</option>
-                            <option value="silt">silt</option>
-                            <option value="theta_r">theta_r</option>
-                            <option value="theta_s">theta_s</option>
+                            <option value="alpha">Alpha</option>
+                            <option value="bd">Bulk density (g/cm3)</option>
+                            <option value="clay">Clay (%)</option>
+                            <option value="hb">Hb (Bubbling Pressure)</option>
+                            <option value="ksat">Ksat (Saturated Hydraulic Conductivity)</option>
+                            <option value="lambda">Lambda (Pore size distribution index)</option>
+                            <option value="n">N (Measure of the pore size distribution)</option>
+                            <option value="om">OM (Organic Matter)</option>
+                            <option value="ph">Ph (Soil pH in H2O)</option>
+                            <option value="sand">Sand (%)</option>
+                            <option value="silt">Silty (%)</option>
+                            <option value="theta_r">theta_r (Residual soil water content)</option>
+                            <option value="theta_s">theta_s (Saturated soil water content)</option>
                         </select>
                         </label>
                     </div>
@@ -389,15 +404,7 @@ function App() {
 
                 <button onClick={handleQueryFarmlands}>Query All Farmlands in View</button>
 
-                <div className="legend">
-                    <h3>Soil Value Legend</h3>
-                    {legendRanges.map((entry, index) => (
-                        <div key={index} style={{ display: 'flex', alignItems: 'center', marginBottom: '5px' }}>
-                            <div style={{ width: '20px', height: '20px', backgroundColor: entry.color, marginRight: '10px' }}></div>
-                            <span>{entry.range}</span>
-                        </div>
-                    ))}
-                </div>
+                <Legend legendRanges={legendRanges} />
 
             </div>
             <div id="map" className="map"></div>

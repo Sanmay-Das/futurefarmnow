@@ -29,3 +29,15 @@ body, html {
     width: 70%;
     height: 100vh; /* Use viewport height to make it full-screen */
 }
+
+.legend .entry {
+  display: flex;
+  align-items: center;
+  margin-bottom: 5px;
+}
+.legend .key {
+  width: 20px;
+  height: 20px;
+  border: solid 2px black;
+  margin-right: 10px;
+ }
