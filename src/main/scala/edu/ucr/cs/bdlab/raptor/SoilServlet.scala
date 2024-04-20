@@ -107,11 +107,16 @@ class SoilServlet extends AbstractWebHandler with Logging {
     val matchingFiles = matchingRasterDirs.flatMap(matchingRasterDir =>
       RasterFileRDD.selectFiles(fileSystem, matchingRasterDir, geom))
     logDebug(s"Query matched ${matchingFiles.length} files")
-    val singleMachineResults: Array[(Int, SingleMachineRaptorJoin.Statistics)] = SingleMachineRaptorJoin.zonalStatistics(matchingFiles, Array(geom))
+    val singleMachineResults: Iterator[(Int, SingleMachineRaptorJoin.Statistics)] =
+      SingleMachineRaptorJoin.zonalStatistics(matchingFiles, Array(geom), () => {(System.nanoTime() - t1) > ServerTimeout})
     val statistics: SingleMachineRaptorJoin.Statistics = if (singleMachineResults == null || singleMachineResults.isEmpty) {
       SingleMachineRaptorJoin.emptyStatistics
     } else {
-      singleMachineResults(0)._2
+      singleMachineResults.toArray.head._2
+    }
+    if (System.nanoTime() - t1 > ServerTimeout) {
+      sendTimeout(response, System.nanoTime() - t1)
+      return true
     }
 
     // Write result to json object
@@ -138,13 +143,13 @@ class SoilServlet extends AbstractWebHandler with Logging {
       resultsNode.put("upperquart", statistics.upperQuart)
     }
 
-    // create root node// create root node
-    // contains queryNode and resultsNode// contains queryNode and resultsNode
+    // create root node
+    // contains queryNode and resultsNode
     val rootNode = mapper.createObjectNode
     rootNode.set("query", queryNode)
     rootNode.set("results", resultsNode)
 
-    // write values to response writer// write values to response writer
+    // write values to response writer
     val jsonString = mapper.writer.writeValueAsString(rootNode)
     resWriter.print(jsonString)
     resWriter.flush()
@@ -213,11 +218,22 @@ class SoilServlet extends AbstractWebHandler with Logging {
       matchingRasterDirs
     }
 
+    if (System.nanoTime() - t1 > ServerTimeout) {
+      sendTimeout(response, System.nanoTime() - t1)
+      return true
+    }
+
     logDebug(s"Query matched ${matchingRasterFiles.length} files")
 
     // Load raster data// Load raster data
-    val finalResults: Array[(Int, SingleMachineRaptorJoin.Statistics)] =
-      SingleMachineRaptorJoin.zonalStatistics(matchingRasterFiles, farmlands.map(_.getGeometry))
+    val finalResults: Iterator[(Int, SingleMachineRaptorJoin.Statistics)] =
+      SingleMachineRaptorJoin.zonalStatistics(matchingRasterFiles, farmlands.map(_.getGeometry),
+        () => System.nanoTime() - t1 > ServerTimeout)
+
+    if (System.nanoTime() - t1 > ServerTimeout) {
+      sendTimeout(response, System.nanoTime() - t1)
+      return true
+    }
 
     // write results to json object// write results to json object
     val out = response.getWriter
@@ -254,6 +270,10 @@ class SoilServlet extends AbstractWebHandler with Logging {
       resultNode.put("stdev", s.stdev)
       resultNode.put("median", s.median)
       resultsNode.add(resultNode)
+      if (System.nanoTime() - t1 > ServerTimeout) {
+        sendTimeout(response, System.nanoTime() - t1)
+        return true
+      }
     }
 
     // create root node// create root node
@@ -315,6 +335,10 @@ class SoilServlet extends AbstractWebHandler with Logging {
     val matchingFiles = matchingRasterDirs.flatMap(matchingRasterDir =>
       RasterFileRDD.selectFiles(fileSystem, matchingRasterDir, geom))
     logDebug(s"Query matched ${matchingFiles.length} files")
+    if (System.nanoTime() - t1 > ServerTimeout) {
+      sendTimeout(response, System.nanoTime() - t1)
+      return true
+    }
 
     val intersections: Array[(Int, Intersections)] = matchingFiles.zipWithIndex.map({ case (rasterFileName: String, index: Int) =>
       val rasterFS: FileSystem = new Path(rasterFileName).getFileSystem(new Configuration())
@@ -322,6 +346,10 @@ class SoilServlet extends AbstractWebHandler with Logging {
       val intersections = new Intersections()
       intersections.compute(Array(geom), rasterReader.metadata)
       rasterReader.close()
+      if (System.nanoTime() - t1 > ServerTimeout) {
+        sendTimeout(response, System.nanoTime() - t1)
+        return true
+      }
       (index, intersections)
     }).filter(_._2.getNumIntersections > 0)
     if (intersections.isEmpty)
@@ -341,6 +369,10 @@ class SoilServlet extends AbstractWebHandler with Logging {
       scala.collection.mutable.HashMap.empty[RasterMetadata, MathTransform]
 
     for (pixel <- pixels) {
+      if (System.nanoTime() - t1 > ServerTimeout) {
+        sendTimeout(response, System.nanoTime() - t1)
+        return true
+      }
       val pixelMBR = Array[Double](pixel.x, pixel.y,
         pixel.x + 1, pixel.y,
         pixel.x + 1, pixel.y + 1,
@@ -368,6 +400,11 @@ class SoilServlet extends AbstractWebHandler with Logging {
     val minM = averages.filterNot(_.isNaN).min
     val maxM = averages.filterNot(_.isNaN).max
 
+    if (System.nanoTime() - t1 > ServerTimeout) {
+      sendTimeout(response, System.nanoTime() - t1)
+      return true
+    }
+
     val targetImage = new BufferedImage(resolution, resolution, BufferedImage.TYPE_INT_ARGB)
     for (offset <- averages.indices; if counts(offset) > 0) {
       val x = offset % resolution
@@ -390,6 +427,9 @@ class SoilServlet extends AbstractWebHandler with Logging {
 }
 
 object SoilServlet {
+  /** Maximum processing time on the server for interactive requests in nano seconds */
+  val ServerTimeout: Long = 10E9.toLong
+
   def rangeOverlap(r1: String, r2: String): Boolean = {
     val parts1 = r1.split("-")
     val begin1 = parts1(0).toInt
@@ -409,4 +449,12 @@ object SoilServlet {
     "60-100" -> "60_100_compressed",
     "100-200" -> "100_200_compressed"
   )
+
+  def sendTimeout(response: HttpServletResponse, timeout: Long): Unit = {
+    response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE)
+    response.setContentType("application/json")
+    val writer = response.getWriter
+    writer.println(s"""{"message": "Request is too costly", "time": ${timeout*1E-9}}""")
+    writer.close()
+  }
 }

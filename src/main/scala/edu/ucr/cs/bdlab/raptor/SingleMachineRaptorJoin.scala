@@ -20,11 +20,36 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.locationtech.jts.geom.Geometry
 
+import scala.collection.mutable.ArrayBuffer
+
 object SingleMachineRaptorJoin {
 
   case class Statistics(min: Float, max: Float, median: Float, sum: Float, mode: Float, stdev: Float, count: Long, mean: Float, lowerQuart: Float, upperQuart: Float)
 
-  val emptyStatistics = Statistics(Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, 0, Float.NaN, Float.NaN, Float.NaN)
+  val emptyStatistics: Statistics = Statistics(Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, 0, Float.NaN, Float.NaN, Float.NaN)
+
+  def findMode(sortedValues: Array[Float]): Float = {
+    if (sortedValues.isEmpty) throw new IllegalArgumentException("Array is empty")
+
+    var mode = sortedValues(0)
+    var currentCount = 1
+    var maxCount = 1
+
+    for (i <- 1 until sortedValues.length) {
+      if (sortedValues(i) == sortedValues(i - 1)) {
+        currentCount += 1
+      } else {
+        currentCount = 1
+      }
+
+      if (currentCount > maxCount) {
+        maxCount = currentCount
+        mode = sortedValues(i)
+      }
+    }
+
+    mode
+  }
 
   /**
    * Compute the desired statistics for the given list of values. The computed statistics are (in order):
@@ -43,46 +68,72 @@ object SingleMachineRaptorJoin {
    * @param inputList the list of values ot compute the statistics for
    * @return
    */
-  def statistics(inputList: List[Float]): Statistics = {
-    val sortedValues: Array[Float] = inputList.sorted.toArray
-    val min: Float = sortedValues(0)
-    val max: Float = sortedValues(sortedValues.length - 1)
-    val sum: Float = sortedValues.sum
-    val mode: Float = sortedValues.groupBy(x => x).toArray.map(x => (x._2.length, x._1)).max._2
-    val count: Int = sortedValues.length
-    val mean: Float = sum / count
-    val stdev: Float = sortedValues.map(x => (x - mean).abs).sum / count
-    val median: Float = if (count % 2 == 0) {
-      val l = count / 2 - 1
-      val r = l + 1
-      (sortedValues(l) + sortedValues(r)) / 2
+  def statistics(inputList: Array[Float]): Statistics = {
+    if (inputList.length > 5000000) {
+      // Size is too big for sorting
+      var min: Float = Float.PositiveInfinity
+      var max: Float = Float.NegativeInfinity
+      var sum: Float = 0
+      var sum2: Float = 0
+      val count: Int = inputList.length
+      for (x <- inputList) {
+        if (x < min)
+          min = x
+        if (x > max)
+          max = x
+        sum += x
+        sum2 += x * x
+      }
+      val stdev = (sum2 - sum * sum / count) / count
+      Statistics(min, max, Float.NaN, sum, Float.NaN, stdev, count, sum / count, Float.NaN, Float.NaN)
     } else {
-      sortedValues(count / 2)
-    }
-    val lowerQuart: Float = sortedValues(sortedValues.length / 4)
-    val upperQuart: Float = sortedValues(sortedValues.length * 3 / 4)
+      val sortedValues = inputList.sorted
+      val min: Float = sortedValues(0)
+      val max: Float = sortedValues(sortedValues.length - 1)
+      val sum: Float = sortedValues.sum
+      val mode: Float = findMode(sortedValues)
+      val count: Int = sortedValues.length
+      val mean: Float = sum / count
+      val stdev: Float = sortedValues.map(x => (x - mean).abs).sum / count
+      val median: Float = if (count % 2 == 0) {
+        val l = count / 2 - 1
+        val r = l + 1
+        (sortedValues(l) + sortedValues(r)) / 2
+      } else {
+        sortedValues(count / 2)
+      }
+      val lowerQuart: Float = sortedValues(sortedValues.length / 4)
+      val upperQuart: Float = sortedValues(sortedValues.length * 3 / 4)
 
-    Statistics( min, max, median, sum, mode, stdev, count, mean, lowerQuart, upperQuart)
+      Statistics( min, max, median, sum, mode, stdev, count, mean, lowerQuart, upperQuart)
+    }
   }
 
-  def zonalStatistics(rasterFileNames: Array[String], geomArray: Array[Geometry]): Array[(Int, Statistics)] = {
+  def zonalStatistics(rasterFileNames: Array[String], geomArray: Array[Geometry], shouldStop: () => Boolean ): Iterator[(Int, Statistics)] = {
     val values: Iterator[(Long, Float)] = raptorJoin(rasterFileNames, geomArray)
     // Custom function to process iterator and group by key
     def processIterator(values: Iterator[(Long, Float)]): Iterator[(Int, Statistics)] = new Iterator[(Int, Statistics)] {
       // Peekable iterator to check ahead without consuming the element
       val peekableValues = values.buffered
 
-      override def hasNext: Boolean = peekableValues.hasNext
+      override def hasNext: Boolean = peekableValues.hasNext && !shouldStop()
 
       override def next(): (Int, Statistics) = {
         if (!hasNext) throw new NoSuchElementException("next on empty iterator")
         val currentKey = peekableValues.head._1
-        val group = peekableValues.takeWhile(_._1 == currentKey).map(_._2).toList
-        (currentKey.toInt, statistics(group))
+        val group = new ArrayBuffer[Float]()
+        while (peekableValues.hasNext && peekableValues.head._1 == currentKey &&
+          (group.size % 1024 > 0 || !shouldStop())) { // Check if we should stop every 1024 records
+          group.append(peekableValues.next()._2)
+        }
+        if (group.isEmpty)
+          (currentKey.toInt, emptyStatistics)
+        else
+          (currentKey.toInt, statistics(group.toArray))
       }
     }
 
-    if (values == null) null else processIterator(values).toArray
+    if (values == null) null else processIterator(values)
   }
 
   /**
@@ -114,7 +165,7 @@ object SingleMachineRaptorJoin {
   }
 
   // join function
-  def zonalStatistics(rasterPath: String, geomArray: Array[Geometry]): Array[(Int, Statistics)] =
-    zonalStatistics(Array(rasterPath), geomArray)
+  def zonalStatistics(rasterPath: String, geomArray: Array[Geometry], shouldStop: () => Boolean): Iterator[(Int, Statistics)] =
+    zonalStatistics(Array(rasterPath), geomArray, shouldStop)
 
 }
