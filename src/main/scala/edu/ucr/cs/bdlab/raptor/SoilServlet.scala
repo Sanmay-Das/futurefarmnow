@@ -2,7 +2,9 @@ package edu.ucr.cs.bdlab.raptor
 
 import com.fasterxml.jackson.core.JsonFactory
 import com.fasterxml.jackson.databind.ObjectMapper
+import edu.ucr.cs.bdlab.beast.cg.Reprojector
 import edu.ucr.cs.bdlab.beast.common.{BeastOptions, WebMethod}
+import edu.ucr.cs.bdlab.beast.geolite.RasterMetadata
 import edu.ucr.cs.bdlab.beast.indexing.RTreeFeatureReader
 import edu.ucr.cs.bdlab.beast.io.{GeoJSONFeatureReader, SpatialFileRDD}
 import edu.ucr.cs.bdlab.beast.util.AbstractWebHandler
@@ -12,7 +14,9 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.hadoop.mapreduce.lib.input.FileSplit
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.SparkSession
+import org.geotools.referencing.operation.transform.{AffineTransform2D, ConcatenatedTransform}
 import org.locationtech.jts.geom.{Envelope, Geometry, GeometryFactory}
+import org.opengis.referencing.operation.MathTransform
 
 import java.awt.Color
 import java.awt.image.BufferedImage
@@ -57,6 +61,7 @@ class SoilServlet extends AbstractWebHandler with Logging {
 
   @WebMethod(url = "/soil/singlepolygon.json", order = 1)
   def singlePolygon(path: String, request: HttpServletRequest, response: HttpServletResponse): Boolean = {
+    val t1 = System.nanoTime()
     // sidebar select parameters
     var soilDepth = ""
     var layer = ""
@@ -143,6 +148,7 @@ class SoilServlet extends AbstractWebHandler with Logging {
     val jsonString = mapper.writer.writeValueAsString(rootNode)
     resWriter.print(jsonString)
     resWriter.flush()
+    logInfo(s"Single polygon processing took ${(System.nanoTime() - t1)*1E-9} seconds")
     true
   }
 
@@ -260,11 +266,14 @@ class SoilServlet extends AbstractWebHandler with Logging {
     val jsonString = mapper.writer.writeValueAsString(rootNode)
     out.print(jsonString)
     out.flush()
+
+    logInfo(s"multipolygon processing took ${(System.nanoTime() - t1)*1E-9} seconds")
     true
   }
 
   @WebMethod(url = "/soil/image.png", order = 1)
   def soilImage(path: String, request: HttpServletRequest, response: HttpServletResponse): Boolean = {
+    val t1 = System.nanoTime()
     // sidebar select parameters
     var soilDepth = ""
     var layer = ""
@@ -318,36 +327,55 @@ class SoilServlet extends AbstractWebHandler with Logging {
     if (intersections.isEmpty)
       return false
     val intersectionIterator: Iterator[(Long, PixelRange)] = new IntersectionsIterator(intersections.map(_._1), intersections.map(_._2))
-    val pixels: Array[RaptorJoinResult[Float]] = new PixelIterator[Float](intersectionIterator, matchingFiles, "0").toArray
+    val pixels: Iterator[RaptorJoinResult[Float]] = new PixelIterator[Float](intersectionIterator, matchingFiles, "0")
 
     // Arrange the pixels in an image
-    val targetImage: BufferedImage = if (matchingFiles.length == 1) {
-      // If all pixels belong to one file, we can just arrange them based on their pixel location
-      var minX: Int = Int.MaxValue
-      var minY: Int = Int.MaxValue
-      var maxX: Int = -1
-      var maxY: Int = -1
-      var minM: Float = Float.PositiveInfinity
-      var maxM: Float = Float.NegativeInfinity
-      for (pixel <- pixels) {
-        minX = minX min pixel.x
-        maxX = maxX max pixel.x
-        minY = minY min pixel.y
-        maxY = maxY max pixel.y
-        minM = minM min pixel.m
-        maxM = maxM max pixel.m
+    val resolution = 256
+    val sums = new Array[Float](resolution * resolution)
+    val counts = new Array[Int](resolution * resolution)
+    val imageMBR = Reprojector.reprojectEnvelope(geom.getEnvelopeInternal, 4326, 3857)
+    val imageMetadata = RasterMetadata.create(imageMBR.getMinX, imageMBR.getMaxY, imageMBR.getMaxX, imageMBR.getMinY,
+      3857, resolution, resolution, resolution, resolution)
+
+    val cachedTransformations: scala.collection.mutable.HashMap[RasterMetadata, MathTransform] =
+      scala.collection.mutable.HashMap.empty[RasterMetadata, MathTransform]
+
+    for (pixel <- pixels) {
+      val pixelMBR = Array[Double](pixel.x, pixel.y,
+        pixel.x + 1, pixel.y,
+        pixel.x + 1, pixel.y + 1,
+        pixel.x, pixel.y + 1,
+      )
+      val transformation = cachedTransformations.getOrElseUpdate(pixel.rasterMetadata, {
+        val t1 = new AffineTransform2D(pixel.rasterMetadata.g2m)
+        val t2 = Reprojector.findTransformationInfo(pixel.rasterMetadata.srid, 3857).mathTransform
+        val t3 = new AffineTransform2D(imageMetadata.g2m.createInverse())
+        ConcatenatedTransform.create(t1, ConcatenatedTransform.create(t2, t3))
+      })
+      transformation.transform(pixelMBR, 0, pixelMBR, 0, 4)
+      val minX: Int = 0 max (pixelMBR(0).round min pixelMBR(2).round min pixelMBR(4).round min pixelMBR(6).round).toInt
+      val maxX: Int = resolution min (pixelMBR(0).round max pixelMBR(2).round max pixelMBR(4).round max pixelMBR(6).round).toInt
+      val minY: Int = 0 max (pixelMBR(1).round min pixelMBR(3).round min pixelMBR(5).round min pixelMBR(7).round).toInt
+      val maxY: Int = resolution min (pixelMBR(1).round max pixelMBR(3).round max pixelMBR(5).round max pixelMBR(7).round) .toInt
+      for (y <- minY until maxY; x <- minX until maxX) {
+        val offset = y * resolution + x
+        sums(offset) += pixel.m
+        counts(offset) += 1
       }
-      val image = new BufferedImage(maxX - minX + 1, maxY - minY + 1, BufferedImage.TYPE_INT_ARGB)
-      for (pixel <- pixels) {
-        val scale: Int = ((pixel.m - minM) * 255 / (maxM - minM)).toInt
-        val color = new Color(scale, scale, scale)
-        image.setRGB(pixel.x - minX, pixel.y - minY, color.getRGB)
-      }
-      image
-    } else {
-      // TODO combine pixels into a single image by reprojecting all pixels
-      val targetImage = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB)
-      throw new RuntimeException("Not yet supported")
+    }
+    // Convert the array of values to an image
+    val averages = counts.zip(sums).map(x => if(x._1 == 0) Float.NaN else x._2 / x._1)
+    val minM = averages.filterNot(_.isNaN).min
+    val maxM = averages.filterNot(_.isNaN).max
+
+    val targetImage = new BufferedImage(resolution, resolution, BufferedImage.TYPE_INT_ARGB)
+    for (offset <- averages.indices; if counts(offset) > 0) {
+      val x = offset % resolution
+      val y = offset / resolution
+      val pixelValue = averages(offset)
+      val scale: Int = ((pixelValue - minM) * 255 / (maxM - minM)).toInt
+      val color = new Color(scale, scale, scale)
+      targetImage.setRGB(x, y, color.getRGB)
     }
     // Return the resulting image
     // set content-type as application/json
@@ -356,6 +384,7 @@ class SoilServlet extends AbstractWebHandler with Logging {
     val out = response.getOutputStream
     ImageIO.write(targetImage, "png", out)
     out.close()
+    logInfo(s"image generation took ${(System.nanoTime() - t1)*1E-9} seconds")
     true
   }
 }

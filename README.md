@@ -24,7 +24,8 @@ The data directory should be organized as follows:
 
 ### Run in development
 To run the server in development mode, run the class "`edu.ucr.cs.bdlab.beast.operations.Main`" with command line
-argument `server`.
+argument `server -enableStaticFileHandling`. Open your browser and navigate to
+(http://localhost:8890/frontend/index.html).
 
 ### Server deployment
 Place the `data/` on the server at which you want it to be hosted.

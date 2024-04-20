@@ -157,7 +157,7 @@ class NDVIServlet extends AbstractWebHandler with Logging {
     response.setContentType("application/json")
     response.setStatus(HttpServletResponse.SC_OK)
 
-    // Load the Farmland features// Load the Farmland features
+    // Load the Farmland features
     val indexPath = new Path(VectorServlet.getIndexPathById(VectorServlet.VectorIndexFile, datasetID))
     val reader = new RTreeFeatureReader
     val fs = indexPath.getFileSystem(sparkSession.sparkContext.hadoopConfiguration)
