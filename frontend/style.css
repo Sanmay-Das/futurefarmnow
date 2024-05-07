@@ -41,3 +41,53 @@ body, html {
   border: solid 2px black;
   margin-right: 10px;
  }
+
+.tabs {
+  display: flex;
+  border-bottom: 2px solid #ccc;
+}
+
+.tabs label {
+  padding: 10px 20px;
+  cursor: pointer;
+  background-color: #f1f1f1;
+  margin-right: 4px;
+  border: 1px solid #ccc;
+  border-bottom: none;
+  position: relative;
+  bottom: -2px;
+}
+
+.tabs label:hover {
+  background-color: #ddd;
+}
+
+.tabs input[type="radio"] {
+  display: none;
+}
+
+.tabs label.checked {
+  background-color: white;
+  color: black;
+  border-color: #ccc;
+  border-bottom: 2px solid white;
+  font-weight: bold;
+}
+
+.form-group {
+  display: flex;
+  justify-content: space-between;
+  align-items: center; /* Aligns items vertically in the center */
+  margin-bottom: 10px; /* Adds some space below each form group */
+}
+
+.form-group label {
+  margin-right: 10px; /* Adds space between the label and the select box */
+  white-space: nowrap; /* Prevents the label from wrapping */
+  flex-shrink: 0; /* Prevents the label from shrinking */
+}
+
+.form-group select {
+  width: 0;
+  flex-grow: 1; /* Allows the select element to grow and fill the remaining space */
+}
