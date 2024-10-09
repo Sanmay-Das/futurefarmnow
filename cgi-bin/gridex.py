@@ -89,7 +89,7 @@ def get_epsg_code(dataset):
 def query_index(directory, query_geometry):
     """
     Reads the index file (_index.csv) in the directory and returns a list of .tif files
-    whose bounding boxes overlap with the provided query geometry.
+    whose bounding polygons overlap with the provided query geometry.
 
     :param directory: The directory containing the index file and .tif files.
     :param query_geometry: The query geometry (GeoJSON format).
@@ -99,19 +99,21 @@ def query_index(directory, query_geometry):
     overlapping_files = []
 
     # Convert the GeoJSON query geometry to an OGR geometry object
-    polygon_geom = ogr.CreateGeometryFromJson(query_geometry)
-    polygon_mbr = polygon_geom.GetEnvelope()  # (minX, maxX, minY, maxY)
+    query_geom = ogr.CreateGeometryFromJson(query_geometry)
 
-    # Open the index file and read the MBRs
+    # Open the index file and read the geometries
     with open(index_path, mode='r') as index_file:
         reader = csv.DictReader(index_file, delimiter=';')
 
         for row in reader:
-            # Get the MBR from the index
-            file_mbr = (float(row["x1"]), float(row["x2"]), float(row["y1"]), float(row["y2"]))
+            # Get the WKT geometry for the file from the index
+            file_geometry_wkt = row["Geometry4326"]
 
-            # Check for MBR overlap
-            if mbr_overlap(polygon_mbr, file_mbr):
+            # Convert the WKT geometry into an OGR geometry object
+            file_geom = ogr.CreateGeometryFromWkt(file_geometry_wkt)
+
+            # Check if the query geometry intersects with the file's geometry
+            if query_geom.Intersects(file_geom):
                 overlapping_files.append(row["FileName"])
 
     return overlapping_files
@@ -130,28 +132,44 @@ def mbr_overlap(polygon_mbr, file_mbr):
     # Check for overlap
     return not (p_max_x < f_min_x or p_min_x > f_max_x or p_max_y < f_min_y or p_min_y > f_max_y)
 
+def index_directories_recursively(root_directory):
+    """
+    Recursively index all directories that contain at least one .tif file under the root_directory.
+    If a directory already contains an _index.csv file, skip creating a new one.
+
+    :param root_directory: The root directory to start searching for .tif files.
+    """
+    for dirpath, _, filenames in os.walk(root_directory):
+        # Check if there are any .tif files in the directory
+        tif_files = [f for f in filenames if f.endswith('.tif')]
+
+        if tif_files:
+            index_path = os.path.join(dirpath, INDEX_FILE)
+
+            # If the index file already exists, skip this directory
+            if os.path.exists(index_path):
+                print(f"Index file already exists in {dirpath}. Skipping.")
+            else:
+                print(f"Creating index for {dirpath}...")
+                create_index(dirpath)
+
 def main():
     """
-    Main function to create an index for a directory of GeoTIFF (.tif) files.
-    Takes the directory path as a command-line argument.
-    Skips index creation if the directory already contains an index file.
+    Main function to create an index for a directory of GeoTIFF (.tif) files and all its subdirectories.
+    Takes the root directory path as a command-line argument.
     """
     if len(sys.argv) != 2:
         print("Usage: python gridex.py <directory>")
         sys.exit(1)
 
-    directory = sys.argv[1]
+    root_directory = sys.argv[1]
 
-    if not os.path.isdir(directory):
-        print(f"Error: {directory} is not a valid directory")
+    if not os.path.isdir(root_directory):
+        print(f"Error: {root_directory} is not a valid directory")
         sys.exit(1)
 
-    # Check if the index file already exists
-    index_path = os.path.join(directory, INDEX_FILE)
-    if os.path.exists(index_path):
-        print(f"Index file already exists at {index_path}. Skipping index creation.")
-    else:
-        create_index(directory)
+    # Recursively index directories containing .tif files
+    index_directories_recursively(root_directory)
 
 if __name__ == "__main__":
     main()
