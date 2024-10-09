@@ -216,8 +216,8 @@ cat > test.geojson
 curl -X GET "http://raptor.cs.ucr.edu/futurefarmnow-backend-0.3-RC1/soil/image.png?soildepth=0-5&layer=alpha" -H "Content-Type: application/geo+json" -d @test.geojson
 ```
 
-#### Response
-![Soil image sample result](images/soil-image.png)
+#### Response (Enlarged to show details)
+<img width="500" src="images/soil-image.png" alt="Soil image sample result" />
 
 ## Get NDVI for a single farmland
 

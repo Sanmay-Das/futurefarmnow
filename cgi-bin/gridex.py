@@ -1,0 +1,157 @@
+import os
+import sys
+import csv
+from osgeo import gdal, osr, ogr
+
+INDEX_FILE = "_index.csv"
+
+# Enable GDAL exceptions for better error handling
+gdal.UseExceptions()
+
+def create_index(directory):
+    """
+    Scans a directory for .tif files, extracts their bounding box information (MBR),
+    and creates an index file (_index.csv) in the directory.
+
+    The index will have columns: ID, FileName, FileSize, x1, y1, x2, y2, SRID, Geometry4326.
+
+    :param directory: The directory containing the .tif files to index.
+    """
+    index_path = os.path.join(directory, INDEX_FILE)
+
+    # Open the index file for writing
+    with open(index_path, mode='w', newline='') as index_file:
+        writer = csv.writer(index_file, delimiter=';')
+
+        # Write header: ID, FileName, FileSize, x1, y1, x2, y2, SRID, Geometry4326
+        writer.writerow(["ID", "FileName", "FileSize", "x1", "y1", "x2", "y2", "SRID", "Geometry4326"])
+
+        file_id = 0
+
+        # Iterate through all .tif files in the directory
+        for filename in os.listdir(directory):
+            if filename.endswith(".tif"):
+                file_path = os.path.join(directory, filename)
+
+                # Open the TIFF file and extract its bounding box (MBR)
+                dataset = gdal.Open(file_path)
+                if dataset:
+                    geo_transform = dataset.GetGeoTransform()
+                    width = dataset.RasterXSize
+                    height = dataset.RasterYSize
+
+                    # Calculate the bounding box
+                    min_x = geo_transform[0]
+                    max_x = min_x + width * geo_transform[1]
+                    min_y = geo_transform[3] + height * geo_transform[5]
+                    max_y = geo_transform[3]
+
+                    # Get the file size
+                    file_size = os.path.getsize(file_path)
+
+                    # Extract the SRID (EPSG code) from the dataset's projection
+                    srid = get_epsg_code(dataset)
+
+                    # Create the WKT geometry (polygon) based on the bounding box
+                    wkt_polygon = f"POLYGON (({min_x} {min_y}, {max_x} {min_y}, {max_x} {max_y}, {min_x} {max_y}, {min_x} {min_y}))"
+
+                    # Write the file information and its bounding box to the index file
+                    writer.writerow([file_id, filename, file_size, min_x, min_y, max_x, max_y, srid, wkt_polygon])
+
+                    # Increment the file ID
+                    file_id += 1
+
+                    # Close the dataset
+                    dataset = None
+
+    print(f"Index created at {index_path}")
+
+def get_epsg_code(dataset):
+    """
+    Extract the EPSG code (SRID) from the GeoTIFF dataset's projection.
+
+    :param dataset: The GDAL dataset of the GeoTIFF file.
+    :return: The EPSG code (SRID) or 'Unknown' if it cannot be determined.
+    """
+    projection = dataset.GetProjection()
+    if not projection:
+        return "Unknown"
+
+    # Use the SpatialReference object to extract the EPSG code
+    spatial_ref = osr.SpatialReference(wkt=projection)
+    if spatial_ref.IsProjected() or spatial_ref.IsGeographic():
+        epsg_code = spatial_ref.GetAttrValue("AUTHORITY", 1)
+        if epsg_code:
+            return epsg_code
+
+    return "Unknown"
+
+def query_index(directory, query_geometry):
+    """
+    Reads the index file (_index.csv) in the directory and returns a list of .tif files
+    whose bounding boxes overlap with the provided query geometry.
+
+    :param directory: The directory containing the index file and .tif files.
+    :param query_geometry: The query geometry (GeoJSON format).
+    :return: A list of .tif file names that overlap with the query geometry.
+    """
+    index_path = os.path.join(directory, INDEX_FILE)
+    overlapping_files = []
+
+    # Convert the GeoJSON query geometry to an OGR geometry object
+    polygon_geom = ogr.CreateGeometryFromJson(query_geometry)
+    polygon_mbr = polygon_geom.GetEnvelope()  # (minX, maxX, minY, maxY)
+
+    # Open the index file and read the MBRs
+    with open(index_path, mode='r') as index_file:
+        reader = csv.DictReader(index_file, delimiter=';')
+
+        for row in reader:
+            # Get the MBR from the index
+            file_mbr = (float(row["x1"]), float(row["x2"]), float(row["y1"]), float(row["y2"]))
+
+            # Check for MBR overlap
+            if mbr_overlap(polygon_mbr, file_mbr):
+                overlapping_files.append(row["FileName"])
+
+    return overlapping_files
+
+def mbr_overlap(polygon_mbr, file_mbr):
+    """
+    Checks if two bounding boxes (MBRs) overlap.
+
+    :param polygon_mbr: The bounding box of the query geometry (minX, maxX, minY, maxY).
+    :param file_mbr: The bounding box of a .tif file (minX, maxX, minY, maxY).
+    :return: True if the bounding boxes overlap, False otherwise.
+    """
+    p_min_x, p_max_x, p_min_y, p_max_y = polygon_mbr
+    f_min_x, f_max_x, f_min_y, f_max_y = file_mbr
+
+    # Check for overlap
+    return not (p_max_x < f_min_x or p_min_x > f_max_x or p_max_y < f_min_y or p_min_y > f_max_y)
+
+def main():
+    """
+    Main function to create an index for a directory of GeoTIFF (.tif) files.
+    Takes the directory path as a command-line argument.
+    Skips index creation if the directory already contains an index file.
+    """
+    if len(sys.argv) != 2:
+        print("Usage: python gridex.py <directory>")
+        sys.exit(1)
+
+    directory = sys.argv[1]
+
+    if not os.path.isdir(directory):
+        print(f"Error: {directory} is not a valid directory")
+        sys.exit(1)
+
+    # Check if the index file already exists
+    index_path = os.path.join(directory, INDEX_FILE)
+    if os.path.exists(index_path):
+        print(f"Index file already exists at {index_path}. Skipping index creation.")
+    else:
+        create_index(directory)
+
+if __name__ == "__main__":
+    main()
