@@ -1,5 +1,33 @@
 #!/usr/bin/env python3
 
+"""
+File: soil_stats.py
+
+This script is designed to process GeoTIFF (.tif) files and extract pixel statistics within a given query polygon
+using weighted depth values. The script reads input as GeoJSON, locates matching TIFF files, and calculates statistics
+on the pixels within the polygon using parallel processing for efficiency.
+
+Functions:
+
+- get_pixel_values_within_polygon(tiff_file, query_polygon):
+    Extracts pixel values from a TIFF file that overlap with a GeoJSON query polygon. The values are returned as a
+    NumPy array, excluding NoData values.
+
+- calculate_statistics(values):
+    Computes basic statistics (min, max, mean, standard deviation, median, quartiles, sum, and count) for the given
+    set of values. Returns an empty dictionary if the input is empty.
+
+- process_tiff_file(tiff_file_info, query_polygon):
+    Processes a single TIFF file by extracting pixel values that overlap with the query polygon, applying a depth weight,
+    and returning the weighted pixel values.
+
+- main():
+    The entry point of the script. It reads a GeoJSON polygon and query parameters (depth and layer) from input, finds
+    matching TIFF files using `gridex.query_index`, processes them in parallel, and returns weighted statistics on the
+    pixel values in JSON format.
+"""
+
+
 import sys
 import json
 import cgitb
@@ -8,63 +36,12 @@ import numpy as np
 from osgeo import gdal, ogr
 from scipy import stats
 import gridex
-import sys
 import concurrent.futures
 from functools import partial
+import soil  # Import the soil module
 
 # Enable CGI error tracing
 cgitb.enable()
-
-# Directories and root path to soil layers
-BASE_DIR = "/var/www/data/POLARIS"
-BASE_DIR = "/Users/eldawy/IdeaProjects/futurefarmnow/data/POLARIS"
-
-# Supported layers
-SUPPORTED_LAYERS = [
-    "alpha", "bd", "clay", "hb", "ksat", "lambda", "n", "om", "ph",
-    "sand", "silt", "theta_r", "theta_s"
-]
-
-def get_matching_subdirectories(polaris_path, depth_range, layer):
-    """
-    Get subdirectories that match the depth range query for a specific layer.
-
-    :param polaris_path: The base path to the POLARIS dataset.
-    :param depth_range: The depth range to query, e.g., "0-60".
-    :param layer: The specific layer to query, e.g., "alpha", "bd", etc.
-    :return: A list of subdirectories that match the depth range query.
-    """
-    matching_dirs = []
-
-    # Parse the input depth range
-    try:
-        from_depth, to_depth = map(int, depth_range.split('-'))
-    except ValueError:
-        raise ValueError(f"Invalid depth range format: {depth_range}. Expected format is 'from-to'.")
-
-    # Path to the specific layer directory
-    layer_dir = os.path.join(polaris_path, layer)
-
-    # Ensure the layer directory exists
-    if not os.path.exists(layer_dir):
-        raise FileNotFoundError(f"Layer directory does not exist: {layer_dir}")
-
-    # Iterate over the subdirectories in the layer directory
-    for subdir in os.listdir(layer_dir):
-        if subdir.endswith("_compressed"):
-            # Extract the depth range from the subdirectory name, e.g., "0_5_compressed" -> 0 and 5
-            depth_str = subdir.replace("_compressed", "")
-            try:
-                sub_from_depth, sub_to_depth = map(int, depth_str.split('_'))
-            except ValueError:
-                continue  # Skip subdirectories that do not match the expected format
-
-            # Check if the subdirectory depth range overlaps with the input range
-            if (sub_from_depth <= to_depth) and (sub_to_depth >= from_depth):
-                # If there is overlap, add the full subdirectory path to the matching list
-                matching_dirs.append(os.path.join(layer_dir, subdir))
-
-    return matching_dirs
 
 def get_pixel_values_within_polygon(tiff_file, query_polygon):
     """
@@ -199,12 +176,13 @@ def main():
         depth_range = params.get("depth")
         layer = params.get("layer")
 
-        if not depth_range or not layer or layer not in SUPPORTED_LAYERS:
+        # Use soil.SUPPORTED_LAYERS and soil.BASE_DIR from the imported soil module
+        if not depth_range or not layer or layer not in soil.SUPPORTED_LAYERS:
             print(json.dumps({"error": "Invalid input"}))
             return
 
-        # Get the matching subdirectories based on depth range and layer
-        matching_subdirs = get_matching_subdirectories(BASE_DIR, depth_range, layer)
+        # Get the matching subdirectories based on depth range and layer using soil.get_matching_subdirectories
+        matching_subdirs = soil.get_matching_subdirectories(soil.BASE_DIR, depth_range, layer)
         if not matching_subdirs:
             print(json.dumps({"error": "No subdirectories found for the given depth range and layer"}))
             return

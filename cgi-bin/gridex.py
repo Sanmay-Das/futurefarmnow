@@ -1,3 +1,37 @@
+"""
+File name: "gridex.py"
+This script provides functionality for indexing and querying GeoTIFF (.tif) files in a directory by extracting
+their bounding box (MBR) and spatial reference information, and saving it in an index file (_index.csv).
+It also enables querying of the index file to find GeoTIFF files that overlap with a given geometry.
+
+Functions:
+
+- create_index(directory):
+    Scans a specified directory for .tif files, extracts their bounding boxes and spatial reference (SRID),
+    and writes this information to an index file (_index.csv) in the same directory.
+
+- get_epsg_code(dataset):
+    Extracts the EPSG code (SRID) from a GeoTIFF dataset's projection information. Returns 'Unknown' if
+    the SRID cannot be determined.
+
+- query_index(directory, query_geometry):
+    Reads the index file in a directory and returns a list of .tif files whose bounding boxes intersect
+    with a provided query geometry in GeoJSON format.
+
+- mbr_overlap(polygon_mbr, file_mbr):
+    Checks if two bounding boxes (MBRs) overlap by comparing their minimum and maximum X/Y coordinates.
+
+- index_directories_recursively(root_directory):
+    Recursively searches through all subdirectories under the root directory for .tif files, and creates
+    an index file in each directory that contains at least one .tif file. Skips directories that already
+    have an _index.csv file.
+
+- main():
+    The entry point of the script. Takes a directory path as a command-line argument and recursively
+    indexes all directories under the given path that contain .tif files.
+"""
+
+
 import os
 import sys
 import csv
