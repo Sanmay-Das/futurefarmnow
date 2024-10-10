@@ -9,6 +9,8 @@ from osgeo import gdal, ogr
 from scipy import stats
 import gridex
 import sys
+import concurrent.futures
+from functools import partial
 
 # Enable CGI error tracing
 cgitb.enable()
@@ -142,6 +144,25 @@ def calculate_statistics(values):
         "count": int(len(values))
     }
 
+
+def process_tiff_file(tiff_file_info, query_polygon):
+    """
+    Process a single TIFF file to extract pixel values that overlap with the query polygon,
+    apply the depth weight, and return the weighted pixel values.
+
+    :param tiff_file_info: A tuple containing the TIFF file path and depth weight.
+    :param query_polygon: The GeoJSON query polygon.
+    :return: A tuple containing the weighted pixel values and the depth weight.
+    """
+    tiff_file_path, depth_weight = tiff_file_info
+    pixel_values = get_pixel_values_within_polygon(tiff_file_path, query_polygon)
+
+    # Apply the depth weight if there are any valid pixel values
+    if pixel_values.size > 0:
+        return pixel_values * depth_weight, depth_weight
+    return np.array([]), 0
+
+
 def main():
     print("Content-Type: application/json")
     print()
@@ -188,11 +209,8 @@ def main():
             print(json.dumps({"error": "No subdirectories found for the given depth range and layer"}))
             return
 
-        # Initialize results for weighted statistics
-        all_pixel_values = []
-        total_weight = 0
-
-        # Loop through each matching subdirectory
+        # Collect all TIFF files and their associated depth weight
+        tiff_file_infos = []
         for subdir in matching_subdirs:
             depth_str = os.path.basename(subdir).replace("_compressed", "")
             sub_from_depth, sub_to_depth = map(int, depth_str.split('_'))
@@ -203,14 +221,28 @@ def main():
             if not tiff_files:
                 continue
 
-            # Loop over each TIFF file and extract pixel values within the polygon
+            # Append the TIFF file paths along with the associated depth weight
             for tiff_file in tiff_files:
                 tiff_file_path = os.path.join(subdir, tiff_file)
-                pixel_values = get_pixel_values_within_polygon(tiff_file_path, query_polygon)
+                tiff_file_infos.append((tiff_file_path, depth_weight))
 
-                # If we found any pixel values, apply the weight based on depth range
+        if not tiff_file_infos:
+            print(json.dumps({"error": "No data files found for the given query"}))
+            return
+
+        # Use ThreadPoolExecutor to process the files in parallel
+        all_pixel_values = []
+        total_weight = 0
+        num_threads = os.cpu_count()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+            # Process each TIFF file in parallel
+            future_to_tiff = {executor.submit(process_tiff_file, tiff_file_info, query_polygon): tiff_file_info for tiff_file_info in tiff_file_infos}
+
+            for future in concurrent.futures.as_completed(future_to_tiff):
+                pixel_values, depth_weight = future.result()
                 if pixel_values.size > 0:
-                    all_pixel_values.extend(pixel_values * depth_weight)
+                    all_pixel_values.extend(pixel_values)
                     total_weight += depth_weight
 
         if not all_pixel_values:
