@@ -110,30 +110,18 @@ object SingleMachineRaptorJoin {
   }
 
   def zonalStatistics(rasterFileNames: Array[String], geomArray: Array[Geometry], shouldStop: () => Boolean ): Iterator[(Int, Statistics)] = {
-    val values: Iterator[(Long, Float)] = raptorJoin(rasterFileNames, geomArray)
-    // Custom function to process iterator and group by key
-    def processIterator(values: Iterator[(Long, Float)]): Iterator[(Int, Statistics)] = new Iterator[(Int, Statistics)] {
-      // Peekable iterator to check ahead without consuming the element
-      val peekableValues = values.buffered
-
-      override def hasNext: Boolean = peekableValues.hasNext && !shouldStop()
-
-      override def next(): (Int, Statistics) = {
-        if (!hasNext) throw new NoSuchElementException("next on empty iterator")
-        val currentKey = peekableValues.head._1
-        val group = new ArrayBuffer[Float]()
-        while (peekableValues.hasNext && peekableValues.head._1 == currentKey &&
-          (group.size % 1024 > 0 || !shouldStop())) { // Check if we should stop every 1024 records
-          group.append(peekableValues.next()._2)
-        }
-        if (group.isEmpty)
-          (currentKey.toInt, emptyStatistics)
-        else
-          (currentKey.toInt, statistics(group.toArray))
-      }
+    val values: Array[(Long, Float)] = raptorJoin[Float](rasterFileNames, geomArray).toArray.sortBy(_._1)
+    val results = new scala.collection.mutable.ArrayBuffer[(Int, Statistics)]()
+    var i1 = 0
+    while (i1 < values.length) {
+      var i2 = i1 + 1
+      while (i2 < values.length && values(i2)._1 == values(i1)._1)
+        i2 += 1
+      val stats = statistics(values.slice(i1, i2).map(_._2))
+      results.append((values(i1)._1.toInt, stats))
+      i1 = i2
     }
-
-    if (values == null) null else processIterator(values)
+    results.iterator
   }
 
   /**
