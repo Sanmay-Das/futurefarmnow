@@ -1,0 +1,11 @@
+sentinelsat
+cdsetool
+geopandas
+shapely
+rasterio
+fiona
+pandas
+numpy
+pyproj
+utm
+python-dotenv
