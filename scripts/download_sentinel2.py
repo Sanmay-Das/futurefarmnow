@@ -30,9 +30,9 @@ def calculate_ndvi(nir, red):
     # Compute NDVI
     ndvi = (nir - red) / (nir + red)
 
-    # Rescale from [-1, 1] to [-127, 127] (keep -128 for invalid pixels)
-    ndvi_rescaled = np.round(ndvi * 127).astype(np.int8)
-    ndvi_rescaled[np.isnan(ndvi)] = -128
+    # Rescale from [-1, 1] to [0, 254] (keep 255 for invalid pixels)
+    ndvi_rescaled = np.round(1+(ndvi + 1.0) * 254).astype(np.uint8)
+    ndvi_rescaled[np.isnan(ndvi)] = 0
 
     return ndvi_rescaled
 
@@ -86,7 +86,7 @@ def process_zip_to_ndvi(zip_path, output_dir):
         nir = src_nir.read(1, resampling=Resampling.bilinear)
         red = src_red.read(1, resampling=Resampling.bilinear)
         meta = src_nir.meta.copy()
-        meta.update({"driver": "GTiff", "dtype": "int8", "compress": "JPEG"})
+        meta.update({"driver": "GTiff", "dtype": "uint8", "compress": "JPEG", "nodata": 0})
 
     # Calculate NDVI
     ndvi = calculate_ndvi(nir, red)
