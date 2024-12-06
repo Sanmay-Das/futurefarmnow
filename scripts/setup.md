@@ -7,6 +7,7 @@ python3 -m venv ffnenv
 source ffnenv/bin/activate
 
 # Install required packages
+# pip install --upgrade pip # If you need to upgrade pip
 pip install -r requirements.txt
 ```
 
