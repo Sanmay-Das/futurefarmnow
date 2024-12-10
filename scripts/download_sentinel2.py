@@ -158,8 +158,12 @@ def download_sentinel2_data(date_from, date_to, roi_input, output_dir, verbosity
     search_terms = {
         "startDate": date_from,
         "completionDate": date_to,
-        "processingLevel": "S2MSI2A",
-        "geometry": roi_wkt,
+        "processingLevel": "S2MSI2A",  # Sentinel-2 Level-2A data
+        "geometry": roi_wkt,           # Region of interest (WKT or GeoJSON)
+        "resolution": "10m",           # Only 10m resolution data
+        "platform": "Sentinel-2",      # Sentinel-2 platform
+        "cloudCover": "[0,10]",        # Cloud cover percentage between 0% and 10%
+        "bands": ["B04", "B08"],       # Red (Band 4) and NIR (Band 8)
     }
 
     # Query features
