@@ -1,4 +1,5 @@
 import os
+import logging
 from datetime import datetime
 from cdsetool.query import query_features
 from cdsetool.download import download_feature
@@ -12,7 +13,23 @@ import rasterio
 from rasterio.enums import Resampling
 import numpy as np
 from shapely.geometry import shape
+from tqdm import tqdm  # For progress bar
 
+# Set up logging
+logger = logging.getLogger(__name__)
+
+def setup_logging(verbosity):
+    """
+    Configure logging based on verbosity level.
+    Args:
+        verbosity (str): Verbosity level ('quiet', 'default', 'verbose').
+    """
+    log_level = {
+        "quiet": logging.ERROR,
+        "default": logging.INFO,
+        "verbose": logging.DEBUG,
+    }.get(verbosity, logging.INFO)
+    logging.basicConfig(level=log_level, format="%(asctime)s [%(levelname)s] %(message)s")
 
 
 def calculate_ndvi(nir, red):
@@ -24,15 +41,27 @@ def calculate_ndvi(nir, red):
     Returns:
         numpy.ndarray: Rescaled NDVI array (8-bit).
     """
+    nir = nir.astype(float)
+    red = red.astype(float)
+
     # Avoid division by zero
     np.seterr(divide="ignore", invalid="ignore")
 
-    # Compute NDVI
-    ndvi = (nir - red) / (nir + red)
+    numerator = nir - red
+    denominator = nir + red
 
-    # Rescale from [-1, 1] to [0, 254] (keep 255 for invalid pixels)
-    ndvi_rescaled = np.round(1+(ndvi + 1.0) * 254).astype(np.uint8)
+    # NDVI calculation with custom handling:
+    # - If numerator is zero, set NDVI to zero.
+    # - If any input is NaN, NDVI remains NaN.
+    ndvi = np.where(
+        numerator == 0, 0,  # If numerator is zero, NDVI is zero
+        numerator / denominator  # Otherwise, compute NDVI as usual
+    )
+
+    # Rescale from [-1, 1] to [1, 255] (keep 0 for invalid pixels)
+    ndvi_rescaled = np.round(1+(ndvi + 1.0) * 127)
     ndvi_rescaled[np.isnan(ndvi)] = 0
+    ndvi_rescaled = ndvi_rescaled.astype(np.uint8)
 
     return ndvi_rescaled
 
@@ -48,6 +77,7 @@ def process_zip_to_ndvi(zip_path, output_dir):
     """
     tile_id = os.path.basename(zip_path).split(".")[0]  # Use the tile ID from filename
     output_file = os.path.join(output_dir, f"{tile_id}.tif")
+    logger.debug(f"Processing {zip_path} into {output_file}")
 
     # Extract the ZIP file
     with zipfile.ZipFile(zip_path, "r") as zip_ref:
@@ -68,10 +98,7 @@ def process_zip_to_ndvi(zip_path, output_dir):
     if not os.path.isdir(r10m_dir):
         raise FileNotFoundError("Could not find the R10m folder in the GRANULE directory.")
 
-    # Locate NIR (Band 8) and Red (Band 4) files
-    nir_band = None
-    red_band = None
-
+    nir_band = red_band = None
     for file in os.listdir(r10m_dir):
         if file.endswith("_B08_10m.jp2"):  # NIR band
             nir_band = os.path.join(r10m_dir, file)
@@ -98,7 +125,7 @@ def process_zip_to_ndvi(zip_path, output_dir):
     return output_file
 
 
-def download_sentinel2_data(date_from, date_to, roi_input, output_dir):
+def download_sentinel2_data(date_from, date_to, roi_input, output_dir, verbosity):
     """
     Download Sentinel2 data for a given date range and region of interest.
 
@@ -113,7 +140,7 @@ def download_sentinel2_data(date_from, date_to, roi_input, output_dir):
         datetime.strptime(date_from, "%Y-%m-%d")
         datetime.strptime(date_to, "%Y-%m-%d")
     except ValueError:
-        print("Invalid date format. Please use 'yyyy-mm-dd'.")
+        logger.error("Invalid date format. Please use 'yyyy-mm-dd'.")
         return
 
     # Load region of interest (ROI)
@@ -136,18 +163,19 @@ def download_sentinel2_data(date_from, date_to, roi_input, output_dir):
     }
 
     # Query features
-    print("Querying Sentinel2 features...")
+    logger.info("Querying Sentinel2 features...")
     features = list(query_features("Sentinel2", search_terms))
 
     if not features:
-        print("No features found for the specified parameters.")
+        logger.warning("No features found for the specified parameters.")
         return
 
     # Authenticate
     credentials = Credentials()
+    results = {"success": 0, "skipped": 0, "errors": 0}
 
     # Download and process features in parallel
-    print(f"Starting download and processing of {len(features)} files...")
+    logger.info(f"Starting download and processing of {len(features)} files...")
 
     def download_and_process(feature):
         try:
@@ -162,36 +190,38 @@ def download_sentinel2_data(date_from, date_to, roi_input, output_dir):
 
             # Skip download if TIF already exists
             if os.path.exists(output_tif) or os.path.exists(zip_path):
+                results["skipped"] += 1
                 return f"TIF already exists, skipping download: {output_tif}"
 
             # Download the ZIP archive
             monitor = StatusMonitor()
             zip_path = download_feature(feature, date_dir, {"credentials": credentials, "monitor": monitor})
-
             # Ensure full path is passed to `process_zip_to_ndvi`
-            full_zip_path = os.path.join(date_dir, os.path.basename(zip_path))
-
-            # Process the ZIP to create NDVI GeoTIFF
-            ndvi_path = process_zip_to_ndvi(full_zip_path, date_dir)
+            zip_path = os.path.join(date_dir, zip_path)
+            ndvi_path = process_zip_to_ndvi(zip_path, date_dir)
 
             # Cleanup intermediate files
-            os.remove(full_zip_path)  # Delete ZIP file
+            os.remove(zip_path) # Delete ZIP file
             safe_dir = next((os.path.join(date_dir, d) for d in os.listdir(date_dir) if d.endswith(".SAFE")), None)
             if safe_dir and os.path.isdir(safe_dir):
                 import shutil
                 shutil.rmtree(safe_dir)  # Delete extracted SAFE directory
 
+            results["success"] += 1
             return f"Feature {feature['id']} processed successfully: {ndvi_path}"
         except Exception as e:
+            results["errors"] += 1
             return f"Error processing feature {feature['id']}: {e}"
 
+    iterator = tqdm(features, desc="Processing files", unit="file") if verbosity == "default" else features
     num_workers = multiprocessing.cpu_count()
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        futures = {executor.submit(download_and_process, feature): feature for feature in features}
+        futures = {executor.submit(download_and_process, feature): feature for feature in iterator}
         for future in as_completed(futures):
-            print(future.result())
+            message = future.result()
+            logger.info(message)
 
-    print("Download and processing complete.")
+    logger.info(f"\nSummary: {results['success']} processed, {results['skipped']} skipped, {results['errors']} errors.")
 
 
 if __name__ == "__main__":
@@ -202,7 +232,9 @@ if __name__ == "__main__":
     parser.add_argument("--date-to", required=True, help="End date in the format yyyy-mm-dd.")
     parser.add_argument("--roi", required=True, help="Region of interest as GeoJSON file or WKT text.")
     parser.add_argument("--output", required=True, help="Directory to save downloaded data.")
+    parser.add_argument("--verbosity", choices=["default", "quiet", "verbose"], default="default",
+                        help="Set verbosity level: default (progress bar), quiet (no output), verbose (detailed logs).")
 
     args = parser.parse_args()
-
-    download_sentinel2_data(args.date_from, args.date_to, args.roi, args.output)
+    setup_logging(args.verbosity)
+    download_sentinel2_data(args.date_from, args.date_to, args.roi, args.output, args.verbosity)

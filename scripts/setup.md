@@ -34,7 +34,7 @@ To test that your credentials are correct, run `python cdse_auth.py`
 To download data, use the `download_sentintel2.py` script. A sample usage is provided below.
 
 ```shell
-python download_sentinel2.py --date-from 2023-01-01 --date-to 2023-02-28 --roi "POLYGON((-117.4105 33.9463, -117.4105 34.0024, -117.3011 34.0024, -117.3011 33.9463, -117.4105 33.9463))" --output ./sentinel_data
+python download_sentinel2.py --date-from 2023-01-01 --date-to 2023-02-28 --roi "POLYGON((-117.4105 33.9463, -117.4105 34.0024, -117.3011 34.0024, -117.3011 33.9463, -117.4105 33.9463))" --output ./sentinel_data --verbosity default
 ```
 
 The region of interest (ROI) can also point to a GeoJSON file that contains one polygon.
