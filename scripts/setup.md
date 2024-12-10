@@ -24,7 +24,7 @@ login konata@izumi.com
 password password123
 ```
 
-Adjust the permissions to the file `chmod 600 ~/.netrc`
+Add your login and password and adjust the permissions to the file `chmod 600 ~/.netrc`
 
 *Note:* Never share this file or push it to your git repository to avoid illegal access.
 

@@ -178,13 +178,13 @@ def download_sentinel2_data(date_from, date_to, roi_input, output_dir, verbosity
     logger.info(f"Starting download and processing of {len(features)} files...")
 
     def download_and_process(feature):
+        tile_id = feature["properties"]["title"].removesuffix('.SAFE')
         try:
             # Determine paths
             date = feature["properties"]["startDate"][:10]
             date_dir = os.path.join(output_dir, date)
             os.makedirs(date_dir, exist_ok=True)
 
-            tile_id = feature["properties"]["title"].removesuffix('.SAFE')
             output_tif = os.path.join(date_dir, f"{tile_id}.tif")
             zip_path = os.path.join(date_dir, f"{tile_id}.zip")
 
@@ -208,18 +208,23 @@ def download_sentinel2_data(date_from, date_to, roi_input, output_dir, verbosity
                 shutil.rmtree(safe_dir)  # Delete extracted SAFE directory
 
             results["success"] += 1
-            return f"Feature {feature['id']} processed successfully: {ndvi_path}"
+            return f"Feature {tile_id} processed successfully: {ndvi_path}"
         except Exception as e:
             results["errors"] += 1
-            return f"Error processing feature {feature['id']}: {e}"
+            return f"Error processing feature {tile_id}: {e}"
 
-    iterator = tqdm(features, desc="Processing files", unit="file") if verbosity == "default" else features
+    # Create progress bar
+    progressbar = tqdm(total=len(features), desc="Processing files", unit="file") if verbosity != "quiet" else None
+
     num_workers = multiprocessing.cpu_count()
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        futures = {executor.submit(download_and_process, feature): feature for feature in iterator}
+        futures = {executor.submit(download_and_process, feature): feature for feature in features}
         for future in as_completed(futures):
             message = future.result()
-            logger.info(message)
+            logger.debug(message)
+            # Update the progress bar
+            if progressbar:
+                progressbar.update(1)
 
     logger.info(f"\nSummary: {results['success']} processed, {results['skipped']} skipped, {results['errors']} errors.")
 
