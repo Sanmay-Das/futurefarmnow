@@ -27,22 +27,20 @@ Functions:
     pixel values in JSON format.
 """
 
-
-import sys
-import json
-import cgitb
-import os
-import numpy as np
+from flask import Flask, request, jsonify
 from osgeo import gdal, ogr
-from scipy import stats
-import gridex
+import numpy as np
 import concurrent.futures
+import os
+import json
 from functools import partial
 import soil  # Import the soil module
+import gridex
+import shapely
 
-# Enable CGI error tracing
-cgitb.enable()
+app = Flask(__name__)
 
+# Function to get pixel values within a polygon
 def get_pixel_values_within_polygon(tiff_file, query_polygon):
     """
     Extract pixel values from the given TIFF file that overlap with the query polygon.
@@ -57,7 +55,7 @@ def get_pixel_values_within_polygon(tiff_file, query_polygon):
         raise FileNotFoundError(f"Could not open the TIFF file: {tiff_file}")
 
     # Convert the query GeoJSON polygon to OGR geometry
-    polygon_geom = ogr.CreateGeometryFromJson(json.dumps(query_polygon))
+    polygon_geom = ogr.CreateGeometryFromWkt(query_polygon.wkt)
     if polygon_geom is None:
         raise ValueError("Invalid GeoJSON polygon")
 
@@ -121,7 +119,7 @@ def calculate_statistics(values):
         "count": int(len(values))
     }
 
-
+# Function to process TIFF files
 def process_tiff_file(tiff_file_info, query_polygon):
     """
     Process a single TIFF file to extract pixel values that overlap with the query polygon,
@@ -139,53 +137,29 @@ def process_tiff_file(tiff_file_info, query_polygon):
         return pixel_values * depth_weight, depth_weight
     return np.array([]), 0
 
-
-def main():
-    print("Content-Type: application/json")
-    print()
-
+# Endpoint to handle the request
+@app.route('/soil/singlepolygon.json', methods=['POST', 'GET'])
+def soil_stats():
     try:
-        # Get Content-Length header to determine the size of the input
-        content_length = os.getenv("CONTENT_LENGTH")
-        if content_length:
-            content_length = int(content_length)
-            # Read exactly `content_length` bytes from stdin
-            payload = sys.stdin.read(content_length)
-        else:
-            payload = ""
+        # Parse GeoJSON polygon from the request body
+        query_polygon = request.get_json()
+        if not query_polygon:
+            return jsonify({"error": "Invalid GeoJSON polygon"}), 400
+        from shapely.geometry import shape
+        query_polygon = shape(query_polygon)
 
-        if not payload:
-            print(json.dumps({"error": "No data provided"}))
-            return
+        # Parse query parameters
+        query_params = request.args
+        depth_range = query_params.get("soildepth")
+        layer = query_params.get("layer")
 
-        # Parse the POST body (GeoJSON polygon)
-        data = json.loads(payload)
-        if "type" not in data or data["type"] != "Polygon":
-            print(json.dumps({"error": "Invalid GeoJSON polygon"}))
-            return
-        query_polygon = data
-
-        # Extract query parameters from the URL
-        query_string = os.getenv("QUERY_STRING")
-        if not query_string:
-            print(json.dumps({"error": "Missing QUERY_STRING"}))
-            return
-
-        # Parse the query parameters safely
-        params = dict(param.split('=') for param in query_string.split('&'))
-        depth_range = params.get("depth")
-        layer = params.get("layer")
-
-        # Use soil.SUPPORTED_LAYERS and soil.BASE_DIR from the imported soil module
         if not depth_range or not layer or layer not in soil.SUPPORTED_LAYERS:
-            print(json.dumps({"error": "Invalid input"}))
-            return
+            return jsonify({"error": "Invalid depth or layer parameter"}), 400
 
-        # Get the matching subdirectories based on depth range and layer using soil.get_matching_subdirectories
+        # Get matching subdirectories
         matching_subdirs = soil.get_matching_subdirectories(soil.BASE_DIR, depth_range, layer)
         if not matching_subdirs:
-            print(json.dumps({"error": "No subdirectories found for the given depth range and layer"}))
-            return
+            return jsonify({"error": "No subdirectories found for the given depth range and layer"}), 404
 
         # Collect all TIFF files and their associated depth weight
         tiff_file_infos = []
@@ -194,8 +168,8 @@ def main():
             sub_from_depth, sub_to_depth = map(int, depth_str.split('_'))
             depth_weight = sub_to_depth - sub_from_depth
 
-            # Use gridex.query_index to find the TIFF files that overlap the query polygon
-            tiff_files = gridex.query_index(subdir, json.dumps(query_polygon))
+            # Find TIFF files that overlap with the query polygon
+            tiff_files = gridex.query_index(subdir, query_polygon)
             if not tiff_files:
                 continue
 
@@ -205,17 +179,16 @@ def main():
                 tiff_file_infos.append((tiff_file_path, depth_weight))
 
         if not tiff_file_infos:
-            print(json.dumps({"error": "No data files found for the given query"}))
-            return
+            return jsonify({"error": "No data files found for the given query"}), 404
 
-        # Use ThreadPoolExecutor to process the files in parallel
+        # Process files in parallel
         all_pixel_values = []
         total_weight = 0
-        num_threads = os.cpu_count()
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
-            # Process each TIFF file in parallel
-            future_to_tiff = {executor.submit(process_tiff_file, tiff_file_info, query_polygon): tiff_file_info for tiff_file_info in tiff_file_infos}
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future_to_tiff = {
+                executor.submit(process_tiff_file, tiff_file_info, query_polygon): tiff_file_info
+                for tiff_file_info in tiff_file_infos
+            }
 
             for future in concurrent.futures.as_completed(future_to_tiff):
                 pixel_values, depth_weight = future.result()
@@ -224,27 +197,34 @@ def main():
                     total_weight += depth_weight
 
         if not all_pixel_values:
-            print(json.dumps({"error": "No valid data found in the queried area"}))
-            return
-
-        # Convert list to NumPy array for statistical calculations
-        all_pixel_values = np.array(all_pixel_values)
+            return jsonify({"error": "No valid data found in the queried area"}), 404
 
         # Calculate weighted statistics
+        all_pixel_values = np.array(all_pixel_values)
         weighted_stats = calculate_statistics(all_pixel_values / total_weight)
 
-        # Return the response in JSON format
+        # Return JSON response
+        import shapely
         response = {
             "query": {
+                "geometry": shapely.geometry.mapping(query_polygon),
                 "depth_range": depth_range,
                 "layer": layer
             },
             "results": weighted_stats
         }
-        print(json.dumps(response, indent=4))
+        return jsonify(response)
 
     except Exception as e:
-        print(json.dumps({"error": str(e)}))
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    main()
+    # Serve static files only in development mode
+    @app.route('/public_html/<path:filename>')
+    def serve_static(filename):
+        static_folder = '../public_html'
+        return send_from_directory(static_folder, filename)
+
+    app.run(debug=True)

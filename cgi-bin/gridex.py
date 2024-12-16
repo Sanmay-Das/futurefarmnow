@@ -36,6 +36,7 @@ import os
 import sys
 import csv
 from osgeo import gdal, osr, ogr
+import shapely
 
 INDEX_FILE = "_index.csv"
 
@@ -120,7 +121,7 @@ def get_epsg_code(dataset):
 
     return "Unknown"
 
-def query_index(directory, query_geometry):
+def query_index(directory, query_geom):
     """
     Reads the index file (_index.csv) in the directory and returns a list of .tif files
     whose bounding polygons overlap with the provided query geometry.
@@ -132,9 +133,6 @@ def query_index(directory, query_geometry):
     index_path = os.path.join(directory, INDEX_FILE)
     overlapping_files = []
 
-    # Convert the GeoJSON query geometry to an OGR geometry object
-    query_geom = ogr.CreateGeometryFromJson(query_geometry)
-
     # Open the index file and read the geometries
     with open(index_path, mode='r') as index_file:
         reader = csv.DictReader(index_file, delimiter=';')
@@ -144,10 +142,11 @@ def query_index(directory, query_geometry):
             file_geometry_wkt = row["Geometry4326"]
 
             # Convert the WKT geometry into an OGR geometry object
-            file_geom = ogr.CreateGeometryFromWkt(file_geometry_wkt)
+            from shapely.wkt import loads as wkt_loads
+            file_geom = wkt_loads(file_geometry_wkt)
 
             # Check if the query geometry intersects with the file's geometry
-            if query_geom.Intersects(file_geom):
+            if query_geom.intersects(file_geom):
                 overlapping_files.append(row["FileName"])
 
     return overlapping_files

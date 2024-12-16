@@ -167,7 +167,7 @@ def iter_combinations(num_combs=np.nan, filtered_distances = None, filtered_indi
 
     return combinations
 
-def select_points(df, epsg_code = 32618, scalar_scheme = 'StandardScaler', outlier_technique = 'IQR Thresholding',weight = 0.5, Morgans = False, output_name = 'results'):
+def select_points(df, num_samples=10, epsg_code = 32618, scalar_scheme = 'StandardScaler', outlier_technique = 'IQR Thresholding',weight = 0.5, Morgans = False, output_name = 'results'):
     Sample_IDx_FID = list(range(len(df)))
     lat = df.columns[0]
     lon = df.columns[1]
@@ -203,8 +203,7 @@ def select_points(df, epsg_code = 32618, scalar_scheme = 'StandardScaler', outli
     
     whitten = 5
     threshold = 0.5
-    sampling = 10
-    
+
     pca = PCA(n_components=pca_selection)
     PCs = pca.fit_transform(X_scaled)
     
@@ -219,11 +218,8 @@ def select_points(df, epsg_code = 32618, scalar_scheme = 'StandardScaler', outli
     NNearest_neighbour = 3 # change this
 
     allowed_samples = [5, 10, 12, 15, 20]# change this
-    no_of_samples = 10
-    sampling = no_of_samples
-    design = generate_design(filtered_Pcs, sampling , whitten)
+    design = generate_design(filtered_Pcs, num_samples, whitten)
 
-    no_of_samples = sampling
     if outlier_technique == 'IQR Thresholding':
         rows_to_keep = IQR_outliers(PCs, threshold)
     elif outlier_technique == 'Mahalanobis Distance':
@@ -237,7 +233,7 @@ def select_points(df, epsg_code = 32618, scalar_scheme = 'StandardScaler', outli
     filtered_Pcs = PCs[rows_to_keep] # Convert filtered_data list to a NumPy array
     outliers_Pcs = PCs[~rows_to_keep] # Convert filtered_data list to a NumPy array
         
-    design, _ = generate_design(filtered_Pcs, no_of_samples, whitten)
+    design, _ = generate_design(filtered_Pcs, num_samples, whitten)
 
     Geo_space_X = df.loc[rows_to_keep, lat]
     Geo_space_Y = df.loc[rows_to_keep, lon]
