@@ -27,7 +27,7 @@ Functions:
     pixel values in JSON format.
 """
 
-from flask import Flask, request, jsonify
+from flask import Blueprint, request, jsonify
 from osgeo import gdal, ogr
 import numpy as np
 import concurrent.futures
@@ -38,7 +38,7 @@ import soil  # Import the soil module
 import gridex
 import shapely
 
-app = Flask(__name__)
+soil_stats_bp = Blueprint("soil_stats", __name__)
 
 # Function to get pixel values within a polygon
 def get_pixel_values_within_polygon(tiff_file, query_polygon):
@@ -137,8 +137,8 @@ def process_tiff_file(tiff_file_info, query_polygon):
         return pixel_values * depth_weight, depth_weight
     return np.array([]), 0
 
-# Endpoint to handle the request
-@app.route('/soil/singlepolygon.json', methods=['POST', 'GET'])
+# Endpoint for soil_stats
+@soil_stats_bp.route('/soil/singlepolygon.json', methods=['POST', 'GET'])
 def soil_stats():
     try:
         # Parse GeoJSON polygon from the request body
@@ -219,12 +219,3 @@ def soil_stats():
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-
-if __name__ == "__main__":
-    # Serve static files only in development mode
-    @app.route('/public_html/<path:filename>')
-    def serve_static(filename):
-        static_folder = '../public_html'
-        return send_from_directory(static_folder, filename)
-
-    app.run(debug=True)

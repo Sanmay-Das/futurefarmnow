@@ -6,11 +6,13 @@ import os
 import sys
 import tempfile
 from io import StringIO
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Blueprint, request, jsonify
 from shapely.geometry import shape
 from extract_points import *
 from choose_points import *
 from soil import BASE_DIR
+
+soil_sample_bp = Blueprint("soil_sample", __name__)
 
 SUPPORTED_LAYERS = [
     "alpha", "bd", "clay", "hb", "ksat", "lambda", "n", "om", "ph",
@@ -116,10 +118,8 @@ def send_response(response_json):
     print()
     print(response_json)
 
-app = Flask(__name__)
-
 # Define the main endpoint
-@app.route('/soil/sample.json', methods=['POST', 'GET'])
+@soil_sample_bp.route('/soil/sample.json', methods=['POST', 'GET'])
 def soil_sample():
     # Extract query parameters from the URL
     query_params = request.args  # Automatically handles QUERY_STRING
@@ -140,12 +140,3 @@ def soil_sample():
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-
-if __name__ == "__main__":
-    # Serve static files only in development mode
-    @app.route('/public_html/<path:filename>')
-    def serve_static(filename):
-        static_folder = '../public_html'
-        return send_from_directory(static_folder, filename)
-
-    app.run(debug=True)

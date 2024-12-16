@@ -17,7 +17,6 @@ Functions:
     exists and checks if the subdirectory depth ranges overlap with the query range.
 """
 
-
 import os  # For working with paths and directories
 import sys  # For handling system-level operations (like file path errors)
 from typing import List  # For type hints (if necessary)
