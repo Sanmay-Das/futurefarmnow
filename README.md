@@ -14,6 +14,8 @@ This project combines California farmland vector data and satellite soil salinit
 ### Dependencies
 
 The soil salinity backend relies upon Java 1.8.0 and Scala 2.12.7.
+For the Python part, you need Python 3.11 or later.
+You also need gdal.
 
 ### Setup
 
@@ -27,7 +29,46 @@ To run the server in development mode, run the class "`edu.ucr.cs.bdlab.beast.op
 argument `server -enableStaticFileHandling`. Open your browser and navigate to
 (http://localhost:8890/frontend/index.html).
 
+For the Python part, you need to create a virtual environment and run a [Flask](https://flask.palletsprojects.com) server on it.
+```shell
+# Create a virtual environment
+python3 -m venv ffnenv
+# Activate the virtual environment
+source ffnenv/bin/activate # or ffn-env\Scripts\activate
+# Install required packages in the virtual environment
+pip install pandas numpy geopandas shapely pyproj rasterio scikit-learn scipy pysal esda libpysal pyDOE3 pykrige tqdm flask osgeo
+# Start a Python server that runs the WSGI scripts
+python3 cgi-bin/server.py
+# When you're done, deactivate the virtual environment
+deactivate
+```
+
 ### Server deployment
+1. Install Apache web server and required libraries to host the application.
+    ```shell
+    sudo apt install apache2 libgdal-dev gdal-bin -y
+    ```
+2. Create a directory to host the application and assign it to the right owner and group.
+    ```shell
+    sudo mkdir /var/www/ffn.example.com
+    sudo chown user:www-data /var/www/ffn.example.com
+    ```
+    This creates a directory and assign your `user` as the owner and `www-data`, i.e., Apache, as the group.
+3. Create a Python virtual environment in that directory to use for the Python server.
+    ```shell
+    cd /var/www/ffn.example.com
+    # Create a virtual environment
+    python3 -m venv ffnenv
+    # Activate the virtual environment
+    source ffnenv/bin/activate
+    # Install required packages in the virtual environment
+    pip install pandas numpy geopandas shapely pyproj rasterio scikit-learn scipy pysal esda libpysal pyDOE3 pykrige tqdm flask osgeo
+    ```
+4. Copy the static HTML files and code to the server.
+    ```shell
+    rsync -av --exclude=__pycache__ public_html/ remote_host:/var/www/ffn.example.com/public_html
+    rsync -av --exclude=__pycache__ cgi-bin/ remote_host:/var/www/ffn.example.com/cgi-bin
+    ```
 Place the `data/` on the server at which you want it to be hosted.
 Install Beast CLI and run the following command at the same directory where you have 
 the `data` directory (not inside the `data` directory).
@@ -38,6 +79,8 @@ beast --jars futurefarmnow-backend-*.jar server
 
 In the directory where you run `beast server`, you can place a file `beast.properties` to set the default
 system parameters, e.g., `port`.
+
+For the Python part, you need to create a virtual environment 
 
 **Configure through Apache:** If you want to make the server accessible through Apache, you can add the following
 configuration to your Apache web server.

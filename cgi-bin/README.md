@@ -3,14 +3,14 @@
 Create a virtual environment:
 ```shell
 # Create a virtual environment
-python3 -m venv ffn-env
+python3 -m venv ffnenv
 # Activate the virtual environment
-source ffn-env/bin/activate # or ffn-env\Scripts\activate
+source ffnenv/bin/activate # or ffn-env\Scripts\activate
 # Install gdal
 brew install gdal # or pip install gdal==3.9.2
 # Install required packages in the virtual environment
-pip install pandas numpy geopandas shapely pyproj rasterio scikit-learn scipy pysal esda libpysal pyDOE3 pykrige tqdm flask
-# Start a Python server that runs the CGI scripts
+pip install pandas numpy geopandas shapely pyproj rasterio scikit-learn scipy pysal esda libpysal pyDOE3 pykrige tqdm flask osgeo
+# Start a Python server that runs the WSGI scripts
 python3 cgi-bin/server.py
 # When you're done, deactivate the virtual environment
 deactivate
