@@ -1,4 +1,49 @@
 #!/usr/bin/env python3
+"""
+File: soil_sample.py
+
+Description:
+This module provides a Flask blueprint for handling requests related to soil data sampling. It includes endpoints
+for processing spatial data and calculating statistics based on user-defined parameters. The module is designed
+to work as part of a larger Flask application.
+
+Features:
+- Accepts GeoJSON geometry and query parameters (`soildepth`, `layer`, `num_points`) via HTTP POST or GET requests.
+- Processes soil sample data using spatial queries and calculates statistics for the selected layers.
+- Supports modular integration through a Flask blueprint (`soil_sample_bp`).
+
+Endpoints:
+- `/soil/sample.json`: Main endpoint for processing soil sample data.
+  - **Methods**: POST, GET
+  - **Parameters**:
+    - `soildepth`: Depth range (e.g., `0-15`).
+    - `layer`: List of layers to process (e.g., `alpha`, `clay`).
+    - `num_points`: Number of sample points to calculate statistics for.
+  - **Body**:
+    - GeoJSON geometry specifying the area of interest.
+  - **Response**:
+    - JSON object containing statistics for the selected layers.
+
+Functions:
+- `calculate_statistics(sample, original_df)`: Calculates various statistics for selected layers.
+- `process_request(query_params, query_geometry)`: Processes the query parameters and geometry to generate results.
+- `soil_sample()`: Flask route handler for the `/soil/sample.json` endpoint.
+
+Dependencies:
+- Flask: Used to handle HTTP requests and responses.
+- Shapely: For geometry parsing and manipulation.
+- Pandas: For statistical calculations on the sample data.
+- Custom Modules:
+  - `extract_points`: Utility functions for extracting spatial data.
+  - `choose_points`: Utility functions for selecting sample points.
+  - `soil`: Provides base directory and supported layers.
+
+Usage:
+- Import and register the blueprint in the main Flask app:
+  ```python
+  from soil_sample import soil_sample_bp
+  app.register_blueprint(soil_sample_bp)
+"""
 
 import json
 import pandas as pd
