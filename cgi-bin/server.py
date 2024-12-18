@@ -51,11 +51,12 @@ app = Flask(__name__)
 app.register_blueprint(soil_stats_bp)
 app.register_blueprint(soil_sample_bp)
 
-if __name__ == "__main__":
+if app.debug:
     # Serve static files only in development mode
     @app.route('/public_html/<path:filename>')
     def serve_static(filename):
         static_folder = '../public_html'
         return send_from_directory(static_folder, filename)
 
-    app.run(debug=True)
+if __name__ == "__main__":
+    app.run()
