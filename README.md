@@ -36,7 +36,7 @@ python3 -m venv ffnenv
 # Activate the virtual environment
 source ffnenv/bin/activate # or ffn-env\Scripts\activate
 # Install required packages in the virtual environment
-pip install pandas numpy geopandas shapely pyproj rasterio scikit-learn scipy pysal esda libpysal pyDOE3 pykrige tqdm flask gdal
+pip install pandas numpy geopandas shapely pyproj rasterio scikit-learn scipy pysal esda libpysal pyDOE3 pykrige tqdm flask gdal mod_wsgi
 # Start a Python server that runs the WSGI scripts
 flask --debug --app cgi-bin/server.py run
 # When you're done, deactivate the virtual environment
@@ -74,6 +74,21 @@ deactivate
     Install Beast CLI and run the following command at the same directory where you have
     the `data` directory (not inside the `data` directory).
 5. Start the Java server
+    1. Make sure that you have [Spark](https://spark.apache.org) and
+       [Beast CLI](https://bitbucket.org/bdlabucr/beast/src/aac8c00fd58f5c4dcbccdfa60ec5b6ba6bf00199/doc/Home.md) installed.
+    2. Create a directory at the server to host the data. This should be on a drive with large capacity to hold the data.
+        ```shell
+        SERVER_DIR=/path/to/server
+        mkdir -p $SERVER_DIR
+        chgrp -R www-data $SERVER_DIR
+        chmod g+rX $SERVER_DIR
+        setfacl -m g:www-data:rX $SERVER_DIR
+        ``` 
+    3. Create the JAR file and copy to the server.
+    ```shell
+    mvn package
+    scp target/futurefarmnow-backend-*.jar remote_host:/var/www/ffn.example.com/
+    ```
     ```shell
     beast --jars futurefarmnow-backend-*.jar server
     ```
@@ -87,53 +102,42 @@ deactivate
 
     ```
     <VirtualHost *:80>
-        ServerAdmin admin@example.com
-        ServerName ffn.example.com
-        Redirect permanent / https://ffn.example.com/
-    </VirtualHost>
-    
-    <IfModule mod_ssl.c>
-    <VirtualHost *:443>
         ServerName ffn.example.com
         DocumentRoot /var/www/ffn.example.com/public_html
-    
+
         # Serve static files from public_html
         Alias /static /var/www/ffn.example.com/public_html
-    
-        <Directory /var/www/ffn.example.com/public_html>
-            Require all granted
-            AllowOverride All
-            RewriteEngine On
-            #RewriteCond %{REQUEST_URI}  ^/futurefarmnow-backend-0.2-SNAPSHOT/(.*)$
-            #RewriteRule ^futurefarmnow-backend-0.2-SNAPSHOT/(.*)$ http://localhost:8081/$1 [P,L]
-            #RewriteCond %{REQUEST_URI}  ^/futurefarmnow-backend-[\.0-9]*(-[\w\d]+)?/(.*)$
-            #RewriteRule ^(.*)$ http://localhost:8080/$1 [P,L]
-       </Directory>
-       # Redirect root URL to /static/
-       RedirectMatch ^/$ /static/
-    
-    
+
+        RewriteEngine On
+        RewriteCond %{REQUEST_URI}  ^/futurefarmnow-backend-[\.0-9]*(-[\w\d]+)?/soil/sample.json$
+        RewriteRule ^(.*)$ /wsgi/soil/sample.json [PT,L]
+        RewriteCond %{REQUEST_FILENAME}  ^/futurefarmnow-backend-[\.0-9]*(-[\w\d]+)?/(.*)$
+        RewriteRule ^/futurefarmnow-backend-[\.0-9]*(-[\w\d]+)?/(.*)$ http://localhost:8890/$2 [P,L]
+
        # Fallback for URLs not matching static files -> Send to WSGI
-       WSGIDaemonProcess ffn.example.com python-home=/var/www/ffn.example.com/ffnenv threads=5
-       WSGIProcessGroup ffn.example.com
+       WSGIDaemonProcess ffn python-home=/var/www/ffn.example.com/ffnenv threads=5
+       WSGIProcessGroup ffn
        WSGIApplicationGroup %{GLOBAL}
-       WSGIScriptAlias / /var/www/ffn.example.com/cgi-bin/wsgi.py
-       <Directory /var/www/ffn.example.com/cgi-bin>
-           Require all granted
+       WSGIScriptAlias /wsgi /var/www/ffn.example.com/cgi-bin/wsgi.py
+       <Directory /var/www/ffn.yasemsem.com/cgi-bin>
+            Require all granted
        </Directory>
 
-       ErrorLog ${APACHE_LOG_DIR}/ffn_error.log
-       CustomLog ${APACHE_LOG_DIR}/ffn_access.log combined
     </VirtualHost>
-    </IfModule>
     ```
 
-    The first RewriteRule forwards all requests that begin with `/futurefarmnow-backend-0.2-SNAPSHOT/` to the server
-    running on port 8081. The second rewrite rule forwards requests for any version to the server running on port 8080.
-    This configuration allows you to deploy a different version of the API while keeping the stable version running.
+   This Apache configuration sets up a virtual host for `ffn.example.com` with static files served from
+   `/static` and a WSGI application routed via `/wsgi`. Specific requests like `/futurefarmnow-backend-[version]/soil/sample.json`
+   are rewritten to `/wsgi/soil/sample.json` and handled by the WSGI application.
+   Other backend requests under `/futurefarmnow-backend-[version]/` are proxied to the Java server running at `localhost:8890`.
+   If you have multiple versions of the server running, you can add more specific rewrite rules for each version to
+   reroute each version to a different server.
+   The configuration uses RewriteRule and RewriteCond for URL pattern matching and ensures proper routing
+   for both static and dynamic content.
+
 7. Enable the site and restart Apache.
     ```shell
-    sudo a2ensite ffn.yasemsem.com
+    sudo a2ensite ffn.example.com
     sudo systemctl reload apache2
     ```
 ### API
