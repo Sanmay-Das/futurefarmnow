@@ -276,7 +276,6 @@ def select_points(df, num_samples=10, epsg_code = 32618, scalar_scheme = 'Standa
     # finding unique ind across all design points
     assigned_to = {}  # Tracks which design point an index is assigned to
     point_counts = np.zeros(len(design), dtype=int)  # Tracks how many points are assigned to each design point
-
     for i in range(len(design)):
         for j in range(NNearest_neighbour):
             if not valid_indices[i][j]:
@@ -315,12 +314,13 @@ def select_points(df, num_samples=10, epsg_code = 32618, scalar_scheme = 'Standa
     scale_geo = lambda x: (x - geo_min)/(geo_max - geo_min)*3 #scale between 0 ~ 3
     scale_var = lambda x: (x - var_min)/(var_max - var_min)*3 #scale between 0 ~ 3
 
-    # for i, e in enumerate(filtered_indices):
-    #         print(f'i: {i}, e: {e}')
-    filtered_distances = [distance.cdist([design[i]], Var_space_XY[e], metric='euclidean').flatten() for i,e in enumerate(filtered_indices)]
+    filtered_distances = [
+        distance.cdist([design[i]], Var_space_XY[e], metric='euclidean').flatten()
+        if len(e) > 0 else np.array([])  # Return an empty array for empty subsets
+        for i, e in enumerate(filtered_indices)
+    ]
 
-    # now check which point belong to which group or if it belongs to a group at all?? must use? create a symetric point in XY plane? more than 2 axis???
-
+    # now check which point belong to which group or if it belongs to a group at all?? must use? create a symmetric point in XY plane? more than 2 axis???
     if prefered_lat:
         x = distance_matrix(design, preferedPCs)
         prefered_mask = (x < var_max).any(axis=0)

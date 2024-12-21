@@ -16,7 +16,7 @@ python3 cgi-bin/server.py
 deactivate
 ```
 
-Navigate to (http://localhost:8000/public_html/soil_sample.html)
+Navigate to (http://127.0.0.1:5000/public_html/soil_sample.html)
 
 # Production Mode
 This part describes how to deploy this app behind Apache webserver.

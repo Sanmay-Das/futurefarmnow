@@ -22,7 +22,7 @@ import sys  # For handling system-level operations (like file path errors)
 from typing import List  # For type hints (if necessary)
 
 # Directories and root path to soil layers
-BASE_DIR = "/var/www/data/POLARIS"
+BASE_DIR = "/path/to/data/POLARIS"
 BASE_DIR = "/Users/eldawy/IdeaProjects/futurefarmnow/data/POLARIS"
 
 # Supported layers

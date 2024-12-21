@@ -180,7 +180,13 @@ def soil_sample():
         return jsonify(response_json)
 
     except (ValueError, json.JSONDecodeError) as e:
-        return jsonify({"error": "Invalid JSON payload."}), 400
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "error": "Invalid JSON payload.",
+            "details": str(e),
+            "stack_trace": traceback.format_exc()
+        }), 400
     except Exception as e:
         import traceback
         traceback.print_exc()

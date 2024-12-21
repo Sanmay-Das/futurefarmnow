@@ -36,17 +36,19 @@ python3 -m venv ffnenv
 # Activate the virtual environment
 source ffnenv/bin/activate # or ffn-env\Scripts\activate
 # Install required packages in the virtual environment
-pip install pandas numpy geopandas shapely pyproj rasterio scikit-learn scipy pysal esda libpysal pyDOE3 pykrige tqdm flask gdal mod_wsgi
+pip install pandas numpy geopandas shapely pyproj rasterio scikit-learn scipy pysal esda libpysal pyDOE3 pykrige tqdm flask gdal
 # Start a Python server that runs the WSGI scripts
 flask --debug --app cgi-bin/server.py run
 # When you're done, deactivate the virtual environment
 deactivate
 ```
 
+To test soil sample funciton, navigate to (http://127.0.0.1:5000/public_html/soil_sample.html)
+
 ### Server deployment
 1. Install Apache web server and required libraries to host the application.
     ```shell
-    sudo apt install apache2 libgdal-dev gdal-bin libapache2-mod-wsgi-py3 apache2-dev -y
+    sudo apt install apache2 libgdal-dev gdal-bin apache2-dev -y
     pip install mod_wsgi
     ```
 2. Create a directory to host the application and assign it to the right owner and group.
@@ -85,20 +87,57 @@ deactivate
         setfacl -m g:www-data:rX $SERVER_DIR
         ``` 
     3. Create the JAR file and copy to the server.
-    ```shell
-    mvn package
-    scp target/futurefarmnow-backend-*.jar remote_host:/var/www/ffn.example.com/
-    ```
-    ```shell
-    beast --jars futurefarmnow-backend-*.jar server
-    ```
+        ```shell
+        mvn package
+        scp target/futurefarmnow-backend-*.jar remote_host:/var/www/ffn.example.com/
+        ```
+        ```shell
+        beast --jars futurefarmnow-backend-*.jar server
+        ```
 
-    In the directory where you run `beast server`, you can place a file `beast.properties` to set the default
-    system parameters, e.g., `port`.
+        In the directory where you run `beast server`, you can place a file `beast.properties` to set the default
+        system parameters, e.g., `port:8080`.
+   4. Configure Apache to forward the requests to the Java server. In your site configuration inside the `<VirtualHost>`
+      section, add the following configuration.
+      ```
+      RewriteCond %{REQUEST_FILENAME}  ^/futurefarmnow-backend-[\.0-9]*(-[\w\d]+)?/(.*)$
+      RewriteRule ^/futurefarmnow-backend-[\.0-9]*(-[\w\d]+)?/(.*)$ http://localhost:8080/$2 [P,L]
+      ```
 
-6. Configure Apache server.
-    **Configure through Apache:** If you want to make the server accessible through Apache, you can add the following
-    configuration to your Apache web server. Create the file `/etc/apache2/sites-available/ffn.yasemsem.com.conf`.
+6. Start the WSGI server.
+    1. In the directory `/var/www/ffn.example.com` where you have the virtual environment, install the required module.
+        ```shell
+        pip install mod_wsgi
+        sudo mod_wsgi-express install # or mod_wsgi-express module-config > /etc/httpd/conf.modules.d/10-wsgi.conf
+        ```
+    2. Option A: Run within Apache. Add the following configuration in your site configuration in your <VirtualHost>.
+       ```
+       RewriteEngine On
+       # You can either list all 
+       RewriteCond %{REQUEST_URI}  ^/futurefarmnow-backend-[\.0-9]*(-[\w\d]+)?/soil/sample.json$
+       RewriteRule ^(.*)$ /wsgi/soil/sample.json [PT,L]
+
+       WSGIDaemonProcess ffn python-home=/var/www/sites/ffn.example.com/ffnenv threads=5
+       WSGIProcessGroup ffn
+       WSGIApplicationGroup %{GLOBAL}
+       WSGIScriptAlias /wsgi /var/www/sites/ffn.example.com/cgi-bin/wsgi.py
+
+       <Directory /var/www/sites/ffn.example.com/cgi-bin/>
+           Require all granted
+       </Directory>
+       ```
+    3. Option B: Run as a standalone server.
+       ```shell
+       mod_wsgi-express start-server cgi-bin/wsgi.py --rotate-logs --log-directory wsgilog --port 8081 --threads 15
+       ```
+       Add the following configuration to your Apache server:
+       ```
+       RewriteCond %{REQUEST_URI}  ^/futurefarmnow-backend-[\.0-9]*(-[\w\d]+)?/soil/sample.json$
+       RewriteRule ^/futurefarmnow-backend-[\.0-9]*(-[\w\d]+)?/(.*)$ http://127.0.0.1:8082/$2 [P,L]
+       ```
+    
+7. Full Apache server configuration.
+    Create the file `/etc/apache2/sites-available/ffn.example.com.conf`.
 
     ```
     <VirtualHost *:80>
@@ -110,36 +149,58 @@ deactivate
 
         RewriteEngine On
         RewriteCond %{REQUEST_URI}  ^/futurefarmnow-backend-[\.0-9]*(-[\w\d]+)?/soil/sample.json$
-        RewriteRule ^(.*)$ /wsgi/soil/sample.json [PT,L]
+        RewriteRule ^/futurefarmnow-backend-[\.0-9]*(-[\w\d]+)?/(.*)$ http://127.0.0.1:8082/$2 [P,L]
         RewriteCond %{REQUEST_FILENAME}  ^/futurefarmnow-backend-[\.0-9]*(-[\w\d]+)?/(.*)$
         RewriteRule ^/futurefarmnow-backend-[\.0-9]*(-[\w\d]+)?/(.*)$ http://localhost:8890/$2 [P,L]
-
-       # Fallback for URLs not matching static files -> Send to WSGI
-       WSGIDaemonProcess ffn python-home=/var/www/ffn.example.com/ffnenv threads=5
-       WSGIProcessGroup ffn
-       WSGIApplicationGroup %{GLOBAL}
-       WSGIScriptAlias /wsgi /var/www/ffn.example.com/cgi-bin/wsgi.py
-       <Directory /var/www/ffn.yasemsem.com/cgi-bin>
-            Require all granted
-       </Directory>
-
     </VirtualHost>
     ```
-
-   This Apache configuration sets up a virtual host for `ffn.example.com` with static files served from
-   `/static` and a WSGI application routed via `/wsgi`. Specific requests like `/futurefarmnow-backend-[version]/soil/sample.json`
-   are rewritten to `/wsgi/soil/sample.json` and handled by the WSGI application.
-   Other backend requests under `/futurefarmnow-backend-[version]/` are proxied to the Java server running at `localhost:8890`.
-   If you have multiple versions of the server running, you can add more specific rewrite rules for each version to
-   reroute each version to a different server.
-   The configuration uses RewriteRule and RewriteCond for URL pattern matching and ensures proper routing
-   for both static and dynamic content.
 
 7. Enable the site and restart Apache.
     ```shell
     sudo a2ensite ffn.example.com
     sudo systemctl reload apache2
     ```
+8. Optional: Set the servers to start as service, e.g., with system startup. Requires root access.
+   1. Create a file `/etc/systemd/system/ffn-java.service` with the following contents.
+      ```
+      [Unit]
+      Description=FutureFarmNow Java server
+      After=network.target
+
+      [Service]
+      Type=simple
+      User=your_user
+      Group=your_group
+      WorkingDirectory=/path/to/server
+      ExecStart=/bin/bash -lc 'beast --jars futurefarmnow-backend-*.jar server'
+      Restart=on-failure
+      
+      [Install]
+      WantedBy=multi-user.target
+      ```
+   2. Create another file for the WSGI service, `/etc/systemd/system/ffn-wsgi.service`:
+      ```
+      [Unit]
+      Description=FutureFarmNow WSGI server
+      After=network.target
+
+      [Service]
+      Type=simple
+      User=your_user
+      Group=your_group
+      WorkingDirectory=/var/www/sites/ffn.example.com
+      ExecStart=/bin/bash -lc '/var/www/sites/ffn.example.com/ffnenv/bin/mod_wsgi-express start-server cgi-bin/wsgi.py --rotate-logs --log-directory wsgilog --port 8082 --threads 15'
+      Restart=on-failure
+      
+      [Install]
+      WantedBy=multi-user.target
+      ```
+   3. Install the new service, enable, and start it.
+      ```shell
+      sudo systemctl daemon-reload # Install the service
+      sudo systemctl enable ffn-java ffn-wsgi
+      sudo systemctl start ffn-java ffn-wsgi
+      ```
 ### API
 Check the detailed [API description here](doc/api.md).
 
