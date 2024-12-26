@@ -229,19 +229,20 @@ Request a set of points to sample a field given as a polygon.
 |------------|-----------|----------------------------------------------------------------------------------------------------------------------|---------------------------------------|
 | soildepth  | Required  | ?soildepth=from-to                                                                                                   | Soil depth on which to run statistics |
 | layer*     | Required  | Accepted values: "alpha", "bd", "clay", "hb", "ksat", "lambda", "n", "om", "ph", "sand", "silt","theta_r", "theta_s" | Soil parameter to consider            |
-| num-points | Required  | How many points in the sample, Accepted values: {5, 7, 10, 12}                                                       | Number of points in the answer        |
+| num_points | Required  | How many points in the sample, Accepted values: {5, 7, 10, 12}                                                       | Number of points in the answer        |
 
 *Note*: GET is the preferred HTTP method for this service since it does not modify the state of the server and its caching will be handled better by the client.
 However, since some SDKs do not support a payload for GET requests, the POST method is also supported for compatibility.
 
 *Note*: The parameter `soildepth` is provided as a range in the format `from-to`.
 Currently, the accepted values for from and to are {0, 5, 15, 30, 60, 100, 200} and `from` must be less than `to`.
-Multiple layers can be requested to include in the sample. If multiple layers are requested, this parameter can be repeated,
+
+*Note*: *Multiple layers can be requested to include in the sample. If multiple layers are requested, this parameter can be repeated,
 e.g., "layer=alpha&layer=clay"
 
 ### Examples
 #### URL
-<https://raptor.cs.ucr.edu/futurefarmnow-backend-0.2-RC1/soil/sample.json?soildepth=0-5&layer=lambda&layer=alpha&num-points=5>
+<https://raptor.cs.ucr.edu/futurefarmnow-backend-0.2-RC1/soil/sample.json?soildepth=0-5&layer=lambda&layer=alpha&num_points=5>
 
 #### GET/POST payload
 ```json
