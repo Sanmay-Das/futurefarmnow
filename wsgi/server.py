@@ -51,6 +51,17 @@ app = Flask(__name__)
 app.register_blueprint(soil_stats_bp)
 app.register_blueprint(soil_sample_bp)
 
+# Global error handler
+@app.errorhandler(Exception)
+def handle_exception(e):
+    print(traceback.format_exc(), file=sys.stderr)
+    return jsonify({
+        "error": "An unexpected error occurred",
+        "details": str(e),
+        "stack_trace": traceback.format_exc()
+    }), 500
+
+
 if app.debug:
     # Serve static files only in development mode
     @app.route('/public_html/<path:filename>')

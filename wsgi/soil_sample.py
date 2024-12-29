@@ -151,17 +151,7 @@ def process_request(query_params, query_geometry):
         }
     }
 
-    # Convert the response data to JSON format
-    response_json = json.dumps(response_data, indent=4)
-
-    return response_json
-
-def send_response(response_json):
-    content_length = len(response_json)
-    print("Content-Type: application/json")
-    print(f"Content-Length: {content_length}")
-    print()
-    print(response_json)
+    return jsonify(response_data)
 
 # Define the main endpoint
 @soil_sample_bp.route('/soil/sample.json', methods=['POST', 'GET'])

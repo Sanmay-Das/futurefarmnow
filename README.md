@@ -38,7 +38,7 @@ source ffnenv/bin/activate # or ffn-env\Scripts\activate
 # Install required packages in the virtual environment
 pip install pandas numpy geopandas shapely pyproj rasterio scikit-learn scipy pysal esda libpysal pyDOE3 pykrige tqdm flask gdal
 # Start a Python server that runs the WSGI scripts
-flask --debug --app cgi-bin/server.py run
+flask --debug --app wsgi/server.py run
 # When you're done, deactivate the virtual environment
 deactivate
 ```
@@ -70,7 +70,7 @@ To test soil sample funciton, navigate to (http://127.0.0.1:5000/public_html/soi
 4. Copy the static HTML files and code to the server.
     ```shell
     rsync -av --exclude=__pycache__ public_html/ remote_host:/var/www/ffn.example.com/public_html
-    rsync -av --exclude=__pycache__ cgi-bin/ remote_host:/var/www/ffn.example.com/cgi-bin
+    rsync -av --exclude=__pycache__ wsgi/ remote_host:/var/www/ffn.example.com/wsgi
     ```
     Place the `data/` on the server at which you want it to be hosted.
     Install Beast CLI and run the following command at the same directory where you have
@@ -120,15 +120,15 @@ To test soil sample funciton, navigate to (http://127.0.0.1:5000/public_html/soi
        WSGIDaemonProcess ffn python-home=/var/www/sites/ffn.example.com/ffnenv threads=5
        WSGIProcessGroup ffn
        WSGIApplicationGroup %{GLOBAL}
-       WSGIScriptAlias /wsgi /var/www/sites/ffn.example.com/cgi-bin/wsgi.py
+       WSGIScriptAlias /wsgi /var/www/sites/ffn.example.com/wsgi/wsgi.py
 
-       <Directory /var/www/sites/ffn.example.com/cgi-bin/>
+       <Directory /var/www/sites/ffn.example.com/wsgi/>
            Require all granted
        </Directory>
        ```
     3. Option B: Run as a standalone server.
        ```shell
-       mod_wsgi-express start-server cgi-bin/wsgi.py --rotate-logs --log-directory wsgilog --port 8081 --threads 15
+       mod_wsgi-express start-server wsgi/wsgi.py --rotate-logs --log-directory wsgilog --port 8081 --threads 15
        ```
        Add the following configuration to your Apache server:
        ```
@@ -189,7 +189,7 @@ To test soil sample funciton, navigate to (http://127.0.0.1:5000/public_html/soi
       User=your_user
       Group=your_group
       WorkingDirectory=/var/www/sites/ffn.example.com
-      ExecStart=/bin/bash -lc '/var/www/sites/ffn.example.com/ffnenv/bin/mod_wsgi-express start-server cgi-bin/wsgi.py --rotate-logs --log-directory wsgilog --port 8082 --threads 15'
+      ExecStart=/bin/bash -lc '/var/www/sites/ffn.example.com/ffnenv/bin/mod_wsgi-express start-server wsgi/wsgi.py --rotate-logs --log-directory wsgilog --port 8082 --threads 15'
       Restart=on-failure
       
       [Install]
