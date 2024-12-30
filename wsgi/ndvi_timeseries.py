@@ -137,6 +137,10 @@ def get_mean_ndvi(tiff_file, query_polygon):
 
 @ndvi_timeseries_bp.route('/ndvi/singlepolygon.json', methods=['POST', 'GET'])
 def ndvi_timeseries():
+    """
+    Fetch NDVI time series for a given GeoJSON polygon and date range.
+    Processes all directories in parallel for better performance.
+    """
     # Parse GeoJSON polygon from the request body
     query_polygon = request.get_json()
     if not query_polygon:
@@ -152,33 +156,46 @@ def ndvi_timeseries():
     if not from_date or not to_date:
         return jsonify({"error": "Missing required date range parameters"}), 400
 
-    # Collect subdirectories matching the date range
+    # Filter directories matching the date range
+    filtered_subdirs = [
+        os.path.join(NDVI_DATA_DIR, subdir)
+        for subdir in sorted(os.listdir(NDVI_DATA_DIR))
+        if from_date <= subdir <= to_date
+    ]
+
+    if not filtered_subdirs:
+        return jsonify({"error": "No data found for the given date range"}), 404
+
+    # Define a helper function to process a single directory
+    def process_directory(subdir_path):
+        tiff_files = gridex.query_index(subdir_path, query_polygon)
+        if not tiff_files:
+            return None
+
+        day_means = []
+        for tiff_file in tiff_files:
+            mean_ndvi = get_mean_ndvi(os.path.join(subdir_path, tiff_file), query_polygon)
+            if mean_ndvi is not None:
+                day_means.append(mean_ndvi)
+
+        if day_means:
+            date = os.path.basename(subdir_path)
+            return {"date": date, "mean": np.mean(day_means)}
+
+        return None
+
+    # Process all directories in parallel
     results = []
-    for subdir in sorted(os.listdir(NDVI_DATA_DIR)):
-        if from_date <= subdir <= to_date:
-            subdir_path = os.path.join(NDVI_DATA_DIR, subdir)
-            index_file_path = os.path.join(subdir_path, gridex.INDEX_FILE)
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = {
+            executor.submit(process_directory, subdir_path): subdir_path
+            for subdir_path in filtered_subdirs
+        }
 
-            # Query the index to find overlapping files
-            tiff_files = gridex.query_index(subdir_path, query_polygon)
-            if not tiff_files:
-                continue
-
-            # Process files to compute mean NDVI
-            day_means = []
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = {
-                    executor.submit(get_mean_ndvi, os.path.join(subdir_path, tiff_file), query_polygon): tiff_file
-                    for tiff_file in tiff_files
-                }
-
-                for future in concurrent.futures.as_completed(futures):
-                    mean_ndvi = future.result()
-                    if mean_ndvi is not None:
-                        day_means.append(mean_ndvi)
-
-            if day_means:
-                results.append({"date": subdir, "mean": np.mean(day_means)})
+        for future in concurrent.futures.as_completed(futures):
+            result = future.result()
+            if result:
+                results.append(result)
 
     if not results:
         return jsonify({"error": "No data found for the given query"}), 404
@@ -189,6 +206,6 @@ def ndvi_timeseries():
             "from": from_date,
             "to": to_date
         },
-        "results": results
+        "results": sorted(results, key=lambda x: x["date"])
     }
     return jsonify(response)
