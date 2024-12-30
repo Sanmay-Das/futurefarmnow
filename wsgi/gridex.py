@@ -75,7 +75,7 @@ def create_index(directory):
                     width = dataset.RasterXSize
                     height = dataset.RasterYSize
 
-                    # Calculate the bounding box
+                    # Calculate the bounding box in the original CRS
                     min_x = geo_transform[0]
                     max_x = min_x + width * geo_transform[1]
                     min_y = geo_transform[3] + height * geo_transform[5]
@@ -87,8 +87,27 @@ def create_index(directory):
                     # Extract the SRID (EPSG code) from the dataset's projection
                     srid = get_epsg_code(dataset)
 
-                    # Create the WKT geometry (polygon) based on the bounding box
-                    wkt_polygon = f"POLYGON (({min_x} {min_y}, {max_x} {min_y}, {max_x} {max_y}, {min_x} {max_y}, {min_x} {min_y}))"
+                    # Transform the bounding box to EPSG:4326 for Geometry4326
+                    source_srs = osr.SpatialReference()
+                    source_srs.ImportFromWkt(dataset.GetProjection())
+
+                    target_srs = osr.SpatialReference()
+                    target_srs.ImportFromEPSG(4326)
+                    target_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+
+                    transform = osr.CoordinateTransformation(source_srs, target_srs)
+
+                    # Transform corners of the bounding box to EPSG:4326
+                    ll = transform.TransformPoint(min_x, min_y)  # Lower-left
+                    lr = transform.TransformPoint(max_x, min_y)  # Lower-right
+                    ur = transform.TransformPoint(max_x, max_y)  # Upper-right
+                    ul = transform.TransformPoint(min_x, max_y)  # Upper-left
+
+                    # Ensure the WKT geometry is in (longitude, latitude) order
+                    wkt_polygon = (
+                        f"POLYGON (({ll[0]} {ll[1]}, {lr[0]} {lr[1]}, "
+                        f"{ur[0]} {ur[1]}, {ul[0]} {ul[1]}, {ll[0]} {ll[1]}))"
+                    )
 
                     # Write the file information and its bounding box to the index file
                     writer.writerow([file_id, filename, file_size, min_x, min_y, max_x, max_y, srid, wkt_polygon])
