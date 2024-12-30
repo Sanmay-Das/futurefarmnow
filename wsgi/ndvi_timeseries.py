@@ -159,7 +159,7 @@ def ndvi_timeseries():
     # Filter directories matching the date range
     filtered_subdirs = [
         os.path.join(NDVI_DATA_DIR, subdir)
-        for subdir in sorted(os.listdir(NDVI_DATA_DIR))
+        for subdir in os.listdir(NDVI_DATA_DIR)
         if from_date <= subdir <= to_date
     ]
 

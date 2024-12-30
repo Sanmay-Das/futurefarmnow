@@ -108,11 +108,11 @@ class NDVIServlet extends AbstractWebHandler with Logging {
         null
       else {
         // Use RaptorJoin to find the results
-        val results = SingleMachineRaptorJoin.raptorJoin[Array[Int]](matchingFiles, Array(geom))
+        val results = SingleMachineRaptorJoin.raptorJoin[Int](matchingFiles, Array(geom))
         // Since we have one geometry, all the results are for a single geometry
         val mean = results
-          .filter(x => x._2(0) + x._2(3) > 0) // Drop records with a denominator of zero
-          .map(x => (x._2(0).toFloat - x._2(3)) / (x._2(0).toFloat + x._2(3))) // NDVI Equation
+          .filter(x => x._2 != 0) // Drop empty values
+          .map(x => (x._2 - 1.0f) * (2 / 254) - 1) // Scale values from [1, 255] to [-1, +1]
           .aggregate((0.0F,0))((sumCount, v) => (sumCount._1 + v, sumCount._2 + 1),
           (sumCount1, sumCount2) => (sumCount1._1 + sumCount2._1, sumCount1._2 + sumCount2._2))
         (new Path(matchingRasterDir).getName, mean._1 / mean._2)
