@@ -5,6 +5,6 @@ NDVI_DATA_DIR = "/path/to/data/NDVI"
 SOIL_DATA_DIR = "/path/to/data/POLARIS"
 
 # Supported POLARIS soil layers
-SUPPORTED_LAYERS = [
+SOIL_LAYERS = [
     "alpha", "bd", "clay", "hb", "ksat", "lambda", "n", "om", "ph", "sand", "silt", "theta_r", "theta_s"
 ]

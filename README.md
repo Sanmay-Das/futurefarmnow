@@ -148,7 +148,7 @@ To test soil sample funciton, navigate to (http://127.0.0.1:5000/public_html/soi
         Alias /static /var/www/ffn.example.com/public_html
 
         RewriteEngine On
-        RewriteCond %{REQUEST_URI}  ^/futurefarmnow-backend-[\.0-9]*(-[\w\d]+)?/soil/sample.json$
+        RewriteCond %{REQUEST_URI}  ^/futurefarmnow-backend-[\.0-9]*(-[\w\d]+)?/(soil/sample.json|ndvi/singlepolygon.json)$
         RewriteRule ^/futurefarmnow-backend-[\.0-9]*(-[\w\d]+)?/(.*)$ http://127.0.0.1:8082/$2 [P,L]
         RewriteCond %{REQUEST_FILENAME}  ^/futurefarmnow-backend-[\.0-9]*(-[\w\d]+)?/(.*)$
         RewriteRule ^/futurefarmnow-backend-[\.0-9]*(-[\w\d]+)?/(.*)$ http://localhost:8890/$2 [P,L]
