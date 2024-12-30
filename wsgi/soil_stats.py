@@ -35,6 +35,7 @@ import os
 import json
 from functools import partial
 import soil  # Import the soil module
+from conf import SOIL_DATA_DIR, SOIL_LAYERS
 import gridex
 import shapely
 
@@ -153,11 +154,11 @@ def soil_stats():
         depth_range = query_params.get("soildepth")
         layer = query_params.get("layer")
 
-        if not depth_range or not layer or layer not in soil.SUPPORTED_LAYERS:
+        if not depth_range or not layer or layer not in SOIL_LAYERS:
             return jsonify({"error": "Invalid depth or layer parameter"}), 400
 
         # Get matching subdirectories
-        matching_subdirs = soil.get_matching_subdirectories(soil.BASE_DIR, depth_range, layer)
+        matching_subdirs = soil.get_matching_subdirectories(SOIL_DATA_DIR, depth_range, layer)
         if not matching_subdirs:
             return jsonify({"error": "No subdirectories found for the given depth range and layer"}), 404
 

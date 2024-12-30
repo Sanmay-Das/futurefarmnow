@@ -5,10 +5,6 @@ This script provides utility functions to query subdirectories of soil layers ba
 It defines constants for the base directory and supported soil layers, and contains functions
 to retrieve directories matching a specified depth range for a specific layer.
 
-Constants:
-- BASE_DIR: The base directory path where the soil layers are stored.
-- SUPPORTED_LAYERS: A list of valid soil layers that can be queried.
-
 Functions:
 
 - get_matching_subdirectories(polaris_path, depth_range, layer):
@@ -20,16 +16,6 @@ Functions:
 import os  # For working with paths and directories
 import sys  # For handling system-level operations (like file path errors)
 from typing import List  # For type hints (if necessary)
-
-# Directories and root path to soil layers
-BASE_DIR = "/path/to/data/POLARIS"
-BASE_DIR = "/Users/eldawy/IdeaProjects/futurefarmnow/data/POLARIS"
-
-# Supported layers
-SUPPORTED_LAYERS = [
-    "alpha", "bd", "clay", "hb", "ksat", "lambda", "n", "om", "ph",
-    "sand", "silt", "theta_r", "theta_s"
-]
 
 def get_matching_subdirectories(polaris_path, depth_range, layer):
     """

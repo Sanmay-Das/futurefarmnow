@@ -124,14 +124,22 @@ def get_epsg_code(dataset):
 def query_index(directory, query_geom):
     """
     Reads the index file (_index.csv) in the directory and returns a list of .tif files
-    whose bounding polygons overlap with the provided query geometry.
+    whose bounding polygons overlap with the provided query geometry. If the index file
+    does not exist, returns all .tif files in the directory.
 
     :param directory: The directory containing the index file and .tif files.
-    :param query_geometry: The query geometry (GeoJSON format).
-    :return: A list of .tif file names that overlap with the query geometry.
+    :param query_geom: The query geometry (GeoJSON format).
+    :return: A list of .tif file names that overlap with the query geometry, or all .tif files if the index file is missing.
     """
     index_path = os.path.join(directory, INDEX_FILE)
     overlapping_files = []
+
+    if not os.path.exists(index_path):
+        # If the index file does not exist, return all .tif files in the directory
+        for filename in os.listdir(directory):
+            if filename.endswith(".tif"):
+                overlapping_files.append(filename)
+        return overlapping_files
 
     # Open the index file and read the geometries
     with open(index_path, mode='r') as index_file:

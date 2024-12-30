@@ -370,21 +370,28 @@ Get NDVI time series for a single geometry defined by GeoJSON. The output is in 
 
 #### Example with cUrl
 ```shell
-cat > test.geojson
-{"type" : "Polygon",  "coordinates" : [ [ [ -120.11975251694177, 36.90564006418889 ], [ -120.12409234994458, 36.90565751854381 ], [ -120.12406217104261, 36.90824957916899 ], [ -120.12410082465097, 36.90918197014845 ], [ -120.12405123315573, 36.90918899854245 ], [ -120.11874725371255, 36.9091820470047 ], [ -120.11975251694177, 36.90564006418889 ] ] ]  }
-^D
-curl -X GET "http://raptor.cs.ucr.edu/futurefarmnow-backend-0.3-RC1/ndvi/singlepolygon.json?from=2023-09-25&to=2023-09-30" -H "Content-Type: application/geo+json" -d @test.geojson
+curl -X GET "http://raptor.cs.ucr.edu/futurefarmnow-backend-0.3-RC1/ndvi/singlepolygon.json?from=2024-01-01&to=2024-01-31" -H "Content-Type: application/geo+json" -d '{ "type": "Polygon", "coordinates": [ [ [ -118.923626554418789, 35.134814256286248 ], [ -118.924826581456216, 35.143157232002977 ], [ -118.905961863912353, 35.145811034496113 ], [ -118.904961895958394, 35.139820211208132 ], [ -118.907145228355603, 35.135074833938482 ], [ -118.923626554418789, 35.134814256286248 ] ] ] }'
 ```
-
 #### Response
 ```json
-{"query":{
-  "from":"2023-09-25",
-  "to":"2023-09-30"},
+{
+  "query": {
+    "from": "2024-01-01",
+    "to": "2024-01-31",
+    "geometry": {
+      "coordinates": [...],
+      "type": "Polygon"
+    }
+  },
   "results": [
-    {"date": "2023-09-25", "mean": 0.5},
-    {"date": "2023-09-29", "mean": 0.3},
-    ...
+    {
+      "date": "2024-01-08",
+      "mean": 0.11700827638807884
+    },
+    {
+      "date": "2024-01-11",
+      "mean": 0.1836339493120872
+    } ...
   ]
 }
 ```

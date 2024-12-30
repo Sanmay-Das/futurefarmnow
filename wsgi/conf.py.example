@@ -1,0 +1,10 @@
+# Path to the NDVI dataset
+NDVI_DATA_DIR = "/path/to/data/NDVI"
+
+# Path to the POLARIS dataset
+SOIL_DATA_DIR = "/path/to/data/POLARIS"
+
+# Supported POLARIS soil layers
+SUPPORTED_LAYERS = [
+    "alpha", "bd", "clay", "hb", "ksat", "lambda", "n", "om", "ph", "sand", "silt", "theta_r", "theta_s"
+]

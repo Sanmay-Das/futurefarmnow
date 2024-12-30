@@ -41,24 +41,28 @@ Usage:
 - For static file hosting, place files in the `../public_html` directory relative to this script.
 """
 
-from flask import Flask, send_from_directory
+from flask import Flask, send_from_directory, jsonify
 from soil_stats import soil_stats_bp
 from soil_sample import soil_sample_bp
+from ndvi_timeseries import ndvi_timeseries_bp
 
 app = Flask(__name__)
 
 # Register blueprints
 app.register_blueprint(soil_stats_bp)
 app.register_blueprint(soil_sample_bp)
+app.register_blueprint(ndvi_timeseries_bp)
 
 # Global error handler
 @app.errorhandler(Exception)
 def handle_exception(e):
+    import traceback
+    import sys
     print(traceback.format_exc(), file=sys.stderr)
     return jsonify({
         "error": "An unexpected error occurred",
         "details": str(e),
-        "stack_trace": traceback.format_exc()
+        "stack_trace": traceback.format_exc().split("\n")
     }), 500
 
 

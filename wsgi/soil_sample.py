@@ -55,14 +55,9 @@ from flask import Blueprint, request, jsonify
 from shapely.geometry import shape
 from extract_points import *
 from choose_points import *
-from soil import BASE_DIR
+from conf import SOIL_DATA_DIR, SOIL_LAYERS
 
 soil_sample_bp = Blueprint("soil_sample", __name__)
-
-SUPPORTED_LAYERS = [
-    "alpha", "bd", "clay", "hb", "ksat", "lambda", "n", "om", "ph",
-    "sand", "silt", "theta_r", "theta_s"
-]
 
 def calculate_statistics(sample, original_df):
     statistics = {}
@@ -129,7 +124,7 @@ def process_request(query_params, query_geometry):
 
     # Calculate layer values at each point
     df = output_from_attr(
-        input_dir=BASE_DIR,
+        input_dir=SOIL_DATA_DIR,
         geometry=query_geometry,
         depth_range=soil_depth,
         attribute_list=layers,

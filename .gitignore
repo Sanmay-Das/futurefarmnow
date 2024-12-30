@@ -1,8 +1,5 @@
 target/
 data/
-.DS_Store
-.idea/
-.classpath
-.project
-*.prefs
-temp.geojson
+wsgi/conf.py
+__pycache__/
+ffnenv/
