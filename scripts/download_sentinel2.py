@@ -124,7 +124,6 @@ def process_zip_to_ndvi(zip_path, output_dir):
 
     return output_file
 
-
 def download_sentinel2_data(date_from, date_to, roi_input, output_dir, verbosity):
     """
     Download Sentinel2 data for a given date range and region of interest.
@@ -160,10 +159,7 @@ def download_sentinel2_data(date_from, date_to, roi_input, output_dir, verbosity
         "completionDate": date_to,
         "processingLevel": "S2MSI2A",  # Sentinel-2 Level-2A data
         "geometry": roi_wkt,           # Region of interest (WKT or GeoJSON)
-        "resolution": "10m",           # Only 10m resolution data
-        "platform": "Sentinel-2",      # Sentinel-2 platform
         "cloudCover": "[0,10]",        # Cloud cover percentage between 0% and 10%
-        "bands": ["B04", "B08"],       # Red (Band 4) and NIR (Band 8)
     }
 
     # Query features
@@ -231,7 +227,6 @@ def download_sentinel2_data(date_from, date_to, roi_input, output_dir, verbosity
                 progressbar.update(1)
 
     logger.info(f"\nSummary: {results['success']} processed, {results['skipped']} skipped, {results['errors']} errors.")
-
 
 if __name__ == "__main__":
     import argparse

@@ -14,10 +14,43 @@ from rasterio.enums import Resampling
 import numpy as np
 from shapely.geometry import shape
 from tqdm import tqdm
-import download_sentinel2_data
+from download_sentinel2 import setup_logging, download_sentinel2_data
+from shapely.geometry import shape
+import geopandas as gpd
+
+from shapely.geometry import box
+from shapely.ops import split
+from shapely.affinity import translate
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+def create_grid(geometry, cell_size=3.0):
+    """
+    Create a uniform grid of polygons over the bounding box of the input geometry.
+    Args:
+        geometry (shapely.geometry.Polygon): Input geometry.
+        cell_size (float): Size of each cell in degrees (3').
+    Returns:
+        list: List of smaller polygons intersecting with the input geometry.
+    """
+    bounds = geometry.bounds
+    minx, miny, maxx, maxy = bounds
+
+    # Create grid cells
+    grid_cells = []
+    x = minx
+    while x < maxx:
+        y = miny
+        while y < maxy:
+            grid_cell = box(x, y, x + cell_size, y + cell_size)
+            grid_cells.append(grid_cell)
+            y += cell_size
+        x += cell_size
+
+    # Split geometry with the grid and retain intersections
+    sub_geometries = [geometry.intersection(cell) for cell in grid_cells if geometry.intersects(cell)]
+    return sub_geometries
 
 def split_date_range(start_date, end_date):
     """
@@ -88,7 +121,7 @@ def mark_month_complete(output_dir, date_range):
 
 def process_month(date_range, roi, output_dir, verbosity):
     """
-    Process Sentinel-2 data for a specific month.
+    Process Sentinel-2 data for a specific month, splitting large geometries into smaller grids.
     Args:
         date_range (tuple): Tuple of (start_date, end_date) for the month.
         roi (str): Path to GeoJSON file or WKT text.
@@ -96,33 +129,28 @@ def process_month(date_range, roi, output_dir, verbosity):
         verbosity (str): Verbosity level.
     """
     logger.info(f"Processing month: {date_range[0]} to {date_range[1]}")
-    retry_attempts = 3
 
-    for attempt in range(retry_attempts):
-        if is_month_complete(output_dir, date_range):
-            logger.info(f"Month {date_range[0]} to {date_range[1]} is already complete. Skipping.")
-            return
-
-        # Process the month using the existing download_sentinel2_data logic
-        download_sentinel2_data(date_range[0], date_range[1], roi, output_dir, verbosity)
-
-        # Check if any new files were processed
-        processed_files = [f for f in os.listdir(output_dir) if f.endswith(".tif")]
-        if processed_files:
-            logger.info(f"Successfully processed files for {date_range[0]} to {date_range[1]}.")
-        else:
-            logger.warning(f"No new files processed for {date_range[0]} to {date_range[1]}.")
-
-        # Exit the retry loop if no errors
-        if is_month_complete(output_dir, date_range):
-            break
+    # Load ROI geometry
+    if roi.endswith(".geojson"):
+        geojson = gpd.read_file(roi)
+        geometry = shape(geojson.geometry[0])
     else:
-        logger.error(f"Failed to process month {date_range[0]} to {date_range[1]} after {retry_attempts} attempts.")
+        geometry = shape(roi)  # Parse WKT
 
-    # Mark the month as complete if everything is processed
+    # Split the geometry into smaller grids
+    sub_geometries = create_grid(geometry)
+
+    for i, sub_geometry in enumerate(sub_geometries):
+        logger.info(f"Processing subgeometry {i + 1}/{len(sub_geometries)}")
+
+        sub_geometry_wkt = sub_geometry.wkt  # Convert to WKT for processing
+
+        # Use the existing download_sentinel2_data logic
+        download_sentinel2_data(date_range[0], date_range[1], sub_geometry_wkt, output_dir, verbosity)
+
+    # Mark the month as complete if all sub-geometries are processed
     if is_month_complete(output_dir, date_range):
         mark_month_complete(output_dir, date_range)
-
 
 def process_date_range(date_from, date_to, roi, output_dir, verbosity):
     """
