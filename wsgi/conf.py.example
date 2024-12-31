@@ -1,8 +1,8 @@
 # Path to the NDVI dataset
-NDVI_DATA_DIR = "/path/to/data/NDVI"
+NDVI_DATA_DIR = "data/NDVI"
 
 # Path to the POLARIS dataset
-SOIL_DATA_DIR = "/path/to/data/POLARIS"
+SOIL_DATA_DIR = "data/POLARIS"
 
 # Supported POLARIS soil layers
 SOIL_LAYERS = [

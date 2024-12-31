@@ -27,7 +27,7 @@ The data directory should be organized as follows:
 ### Run in development
 To run the server in development mode, run the class "`edu.ucr.cs.bdlab.beast.operations.Main`" with command line
 argument `server -enableStaticFileHandling`. Open your browser and navigate to
-(http://localhost:8890/frontend/index.html).
+(http://localhost:8890/public_html/index.html).
 
 For the Python part, you need to create a virtual environment and run a [Flask](https://flask.palletsprojects.com) server on it.
 ```shell
@@ -43,7 +43,7 @@ flask --debug --app wsgi/server.py run
 deactivate
 ```
 
-To test soil sample funciton, navigate to (http://127.0.0.1:5000/public_html/soil_sample.html)
+To test soil sample function, navigate to (http://127.0.0.1:5000/public_html/soil_sample.html)
 
 ### Server deployment
 1. Install Apache web server and required libraries to host the application.
