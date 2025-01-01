@@ -1,22 +1,24 @@
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from cdsetool.query import query_features
 from cdsetool.download import download_feature
 from cdsetool.credentials import Credentials
 from cdsetool.monitor import StatusMonitor
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import multiprocessing
+from multiprocessing import Manager, cpu_count
 import json
 import zipfile
 import rasterio
 from rasterio.enums import Resampling
 import numpy as np
-from shapely.geometry import shape
-from tqdm import tqdm  # For progress bar
+from shapely.geometry import shape, box
+from shapely.wkt import loads as parse_wkt
+from queue import Queue
+from threading import Thread
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
 
 def setup_logging(verbosity):
     """
@@ -30,6 +32,53 @@ def setup_logging(verbosity):
         "verbose": logging.DEBUG,
     }.get(verbosity, logging.INFO)
     logging.basicConfig(level=log_level, format="%(asctime)s [%(levelname)s] %(message)s")
+
+
+def create_grid(geometry, cell_size=3.0):
+    """
+    Create a uniform grid of polygons over the bounding box of the input geometry.
+    Args:
+        geometry (shapely.geometry.Polygon): Input geometry.
+        cell_size (float): Size of each cell in degrees (3').
+    Returns:
+        list: List of smaller polygons intersecting with the input geometry.
+    """
+    bounds = geometry.bounds
+    minx, miny, maxx, maxy = bounds
+
+    # Create grid cells
+    grid_cells = []
+    x = minx
+    while x < maxx:
+        y = miny
+        while y < maxy:
+            grid_cell = box(x, y, x + cell_size, y + cell_size)
+            grid_cells.append(grid_cell)
+            y += cell_size
+        x += cell_size
+
+    # Split geometry with the grid and retain intersections
+    sub_geometries = [geometry.intersection(cell) for cell in grid_cells if geometry.intersects(cell)]
+    return sub_geometries
+
+def split_date_range(start_date, end_date):
+    """
+    Split a large date range into smaller daily date ranges.
+    Args:
+        start_date (str): Start date in 'yyyy-mm-dd' format.
+        end_date (str): End date in 'yyyy-mm-dd' format.
+    Returns:
+        list of tuples: List of date strings for each day.
+    """
+    start = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+    ranges = []
+
+    while start <= end:
+        ranges.append(start.strftime("%Y-%m-%d"))
+        start += timedelta(days=1)
+
+    return ranges
 
 
 def calculate_ndvi(nir, red):
@@ -124,109 +173,150 @@ def process_zip_to_ndvi(zip_path, output_dir):
 
     return output_file
 
-def download_sentinel2_data(date_from, date_to, roi_input, output_dir, verbosity):
+
+def download_and_process(feature, credentials, output_dir):
+    """
+    Downloads and processes a single feature
+    :param feature: the feature to download and process
+    :param credentials: the login credentials to download the file
+    :param output_dir: the directory to write the output file to
+    :return Status of processing the file as one of {"skip", "success", "error"}
+    """
+    tile_id = feature["properties"]["title"].removesuffix('.SAFE')
+    try:
+        # Determine paths
+        date = feature["properties"]["startDate"][:10]
+        date_dir = os.path.join(output_dir, date)
+        os.makedirs(date_dir, exist_ok=True)
+
+        output_tif = os.path.join(date_dir, f"{tile_id}.tif")
+        zip_path = os.path.join(date_dir, f"{tile_id}.zip")
+
+        # Skip download if TIF already exists
+        if os.path.exists(output_tif) or os.path.exists(zip_path):
+            return "skip"
+
+        # Download the ZIP archive
+        monitor = StatusMonitor()
+        zip_path = download_feature(feature, date_dir, {"credentials": credentials, "monitor": monitor})
+        # Ensure full path is passed to `process_zip_to_ndvi`
+        zip_path = os.path.join(date_dir, zip_path)
+        ndvi_path = process_zip_to_ndvi(zip_path, date_dir)
+
+        # Cleanup intermediate files
+        os.remove(zip_path) # Delete ZIP file
+        safe_dir = next((os.path.join(date_dir, d) for d in os.listdir(date_dir) if d.endswith(".SAFE")), None)
+        if safe_dir and os.path.isdir(safe_dir):
+            import shutil
+            shutil.rmtree(safe_dir)  # Delete extracted SAFE directory
+
+        return "success"  # Indicating success
+    except Exception as e:
+        return "error"  # Indicating the error that happened
+
+
+def download_sentinel2_data(date_from, date_to, aoi, output_dir):
     """
     Download Sentinel2 data for a given date range and region of interest.
 
     Args:
         date_from (str): Start date in the format 'yyyy-mm-dd'.
         date_to (str): End date in the format 'yyyy-mm-dd'.
-        roi_input (str): Path to GeoJSON file or WKT text as a region of interest.
+        aoi (geometry): The geographical area-of-interest to search in
         output_dir (str): Directory to save downloaded data.
     """
-    # Validate input dates
-    try:
-        datetime.strptime(date_from, "%Y-%m-%d")
-        datetime.strptime(date_to, "%Y-%m-%d")
-    except ValueError:
-        logger.error("Invalid date format. Please use 'yyyy-mm-dd'.")
-        return
+    max_retries = 3
+    manager = Manager()
+    all_files = {}  # A map from date to all files in that date
+    processed_files = manager.list()  # Files that have been processed successfully
+    skipped_files = manager.list()  # Files that have been skipped since they are already processed
+    failed_files = manager.list()  # Files that have been failed while processing
+    work_queue = Queue(maxsize=100)  # A queue of work tasks (feature, attempt) tuples
 
-    # Load region of interest (ROI)
-    if os.path.exists(roi_input) and roi_input.lower().endswith(".geojson"):
-        # If GeoJSON file
-        with open(roi_input, "r") as geojson_file:
-            geojson = json.load(geojson_file)
-            geometry = geojson["features"][0]["geometry"]
-            roi_wkt = shape(geometry).wkt  # Convert GeoJSON to WKT
-    else:
-        # Assume input is already a WKT string
-        roi_wkt = roi_input
+    def producer():
+        logger.info("Starting producer...")
 
-    # Prepare search terms
-    search_terms = {
-        "startDate": date_from,
-        "completionDate": date_to,
-        "processingLevel": "S2MSI2A",  # Sentinel-2 Level-2A data
-        "geometry": roi_wkt,           # Region of interest (WKT or GeoJSON)
-        "cloudCover": "[0,10]",        # Cloud cover percentage between 0% and 10%
+        # 1- Break down the geometric query using a uniform grid
+        sub_geometries = create_grid(aoi)
+        # 2- Break down the date range day-by-day
+        date_ranges = split_date_range(date_from, date_to)
+
+        # 3- Loop over the date range, for each one loop over the sub-geometries
+        for date in date_ranges:
+            for sub_geometry in sub_geometries:
+                search_terms = {
+                    "startDate": date,
+                    "completionDate": date,
+                    "processingLevel": "S2MSI2A",
+                    "geometry": sub_geometry.wkt,
+                    "cloudCover": "[0,10]",
+                }
+
+                # 4- Run the search query and add the results the list of all_files and enqueue into the work_queue
+                features = list(query_features("Sentinel2", search_terms))
+                if features:
+                    all_files[date].extend(features)
+                    for feature in features:
+                        work_queue.put((feature, max_retries))
+
+            # 6- Track the progress and mark complete days as complete
+            for file in (processed_files + skipped_files):
+                day = ... # TODO Parse file name to get the date in "yyyy-mm-dd" format
+                # TODO remove the file from the all_files dictionary
+                # TODO If day becomes empty, remove it from the dictionary and create a ".complete" file
+                # TODO in the corresponding output directory
+        # After done, raise a global flag that we're done
+        work_queue.put(None)
+
+
+
+    def consumer(i):
+        logger.info(f"Starting consumer #{i}")
+        credentials = Credentials()
+        while True:
+            # 1- Retrieve one file from the work queue
+            task = work_queue.get()
+            if task is None:  # Work is already
+                # Replace the None marker for other consumers
+                work_queue.put(None)
+                break
+
+            feature, retries = task
+            status = download_and_process(feature, credentials, output_dir)
+            if status == "success":
+                processed_files.append(feature)
+            elif status == "error" and retries > 0:
+                work_queue.put((feature, retries - 1))
+            elif status == "error" and retries == 0:
+                failed_files.append(feature)
+            elif status == "skip":
+                skipped_files.append(feature)
+            else:
+                logger.error(f"Unexpected status {status}")
+
+
+    # Start one producer and # of consumers equal to number of processors * 2
+    producer_thread = Thread(target=producer, args=(date_from, date_to, geometry, work_queue, all_files))
+    producer_thread.start()
+
+    consumers = []
+    for i in range(cpu_count() * 2):
+        consumer_thread = Thread(target=consumer, args=(work_queue, output_dir, processed_files, skipped_files, failed_files, max_retries))
+        consumers.append(consumer_thread)
+        consumer_thread.start()
+
+    # Wait until all is done
+    producer_thread.join()
+    for consumer_thread in consumers:
+        consumer_thread.join()
+
+    # Return a final dictionary object with number of files processed, failed, and skipped
+    return {
+        "processed": len(processed_files),
+        "skipped": len(skipped_files),
+        "failed": len(failed_files),
     }
 
-    # Query features
-    logger.info("Querying Sentinel2 features...")
-    features = list(query_features("Sentinel2", search_terms))
-
-    if not features:
-        logger.warning("No features found for the specified parameters.")
-        return
-
-    # Authenticate
-    credentials = Credentials()
-    results = {"success": 0, "skipped": 0, "errors": 0}
-
-    # Download and process features in parallel
-    logger.info(f"Starting download and processing of {len(features)} files...")
-
-    def download_and_process(feature):
-        tile_id = feature["properties"]["title"].removesuffix('.SAFE')
-        try:
-            # Determine paths
-            date = feature["properties"]["startDate"][:10]
-            date_dir = os.path.join(output_dir, date)
-            os.makedirs(date_dir, exist_ok=True)
-
-            output_tif = os.path.join(date_dir, f"{tile_id}.tif")
-            zip_path = os.path.join(date_dir, f"{tile_id}.zip")
-
-            # Skip download if TIF already exists
-            if os.path.exists(output_tif) or os.path.exists(zip_path):
-                results["skipped"] += 1
-                return f"TIF already exists, skipping download: {output_tif}"
-
-            # Download the ZIP archive
-            monitor = StatusMonitor()
-            zip_path = download_feature(feature, date_dir, {"credentials": credentials, "monitor": monitor})
-            # Ensure full path is passed to `process_zip_to_ndvi`
-            zip_path = os.path.join(date_dir, zip_path)
-            ndvi_path = process_zip_to_ndvi(zip_path, date_dir)
-
-            # Cleanup intermediate files
-            os.remove(zip_path) # Delete ZIP file
-            safe_dir = next((os.path.join(date_dir, d) for d in os.listdir(date_dir) if d.endswith(".SAFE")), None)
-            if safe_dir and os.path.isdir(safe_dir):
-                import shutil
-                shutil.rmtree(safe_dir)  # Delete extracted SAFE directory
-
-            results["success"] += 1
-            return f"Feature {tile_id} processed successfully: {ndvi_path}"
-        except Exception as e:
-            results["errors"] += 1
-            return f"Error processing feature {tile_id}: {e}"
-
-    # Create progress bar
-    progressbar = tqdm(total=len(features), desc="Processing files", unit="file") if verbosity != "quiet" else None
-
-    num_workers = multiprocessing.cpu_count()
-    with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        futures = {executor.submit(download_and_process, feature): feature for feature in features}
-        for future in as_completed(futures):
-            message = future.result()
-            logger.debug(message)
-            # Update the progress bar
-            if progressbar:
-                progressbar.update(1)
-
-    logger.info(f"\nSummary: {results['success']} processed, {results['skipped']} skipped, {results['errors']} errors.")
 
 if __name__ == "__main__":
     import argparse
@@ -241,4 +331,18 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     setup_logging(args.verbosity)
-    download_sentinel2_data(args.date_from, args.date_to, args.roi, args.output, args.verbosity)
+
+    # Parse the region of interest parameter
+    # Load region of interest (ROI)
+    roi = args.roi
+    if os.path.exists(roi) and roi.lower().endswith(".geojson"):
+        # If GeoJSON file
+        with open(roi, "r") as geojson_file:
+            geojson = json.load(geojson_file)
+            geometry = geojson["features"][0]["geometry"]
+            roi = shape(geometry)
+    else:
+        # Assume input is already a WKT string
+        roi = parse_wkt(roi)
+    results = download_sentinel2_data(args.date_from, args.date_to, roi, args.output)
+    logger.info(f"\nSummary: {results['success']} processed, {results['skipped']} skipped, {results['errors']} errors.")

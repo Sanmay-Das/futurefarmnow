@@ -9,4 +9,3 @@ rasterio==1.4.2
 sentinelsat==1.2.1
 shapely==2.0.6
 utm==0.7.0
-tqdm
