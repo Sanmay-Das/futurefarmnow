@@ -204,7 +204,7 @@ def download_and_process(feature, credentials, output_dir):
         ndvi_path = process_zip_to_ndvi(zip_path, date_dir)
 
         # Cleanup intermediate files
-        os.remove(zip_path) # Delete ZIP file
+        os.remove(zip_path)  # Delete ZIP file
         safe_dir = next((os.path.join(date_dir, d) for d in os.listdir(date_dir) if d.endswith(".SAFE")), None)
         if safe_dir and os.path.isdir(safe_dir):
             import shutil
@@ -212,7 +212,8 @@ def download_and_process(feature, credentials, output_dir):
 
         return "success"  # Indicating success
     except Exception as e:
-        return "error"  # Indicating the error that happened
+        logger.error(f"Error processing feature {tile_id}: {e}")
+        return "error"
 
 
 def download_sentinel2_data(date_from, date_to, aoi, output_dir):
@@ -244,8 +245,7 @@ def download_sentinel2_data(date_from, date_to, aoi, output_dir):
         # 3- Loop over the date range, for each one loop over the sub-geometries
         for date in date_ranges:
             # If the day is marked as complete, skip this day
-            day_dir = os.path.join(output_dir, date)
-            complete_file_path = os.path.join(day_dir, ".complete")
+            complete_file_path = os.path.join(output_dir, date, ".complete")
             if os.path.exists(complete_file_path):
                 logger.info(f"Skipping completed day: {date}")
                 continue
@@ -259,7 +259,7 @@ def download_sentinel2_data(date_from, date_to, aoi, output_dir):
                     "cloudCover": "[0,10]",
                 }
 
-                # 4- Run the search query and add the results the list of all_files and enqueue into the work_queue
+                # Run the search query and add the results the list of all_files and enqueue into the work_queue
                 features = list(query_features("Sentinel2", search_terms))
                 if features:
                     if date not in all_files:
@@ -268,7 +268,7 @@ def download_sentinel2_data(date_from, date_to, aoi, output_dir):
                     for feature in features:
                         work_queue.put((feature, max_retries))
 
-            # 6- Track the progress and mark complete days as complete
+            # Track the progress and mark complete days as complete
             for file in list(processed_files) + list(skipped_files):
                 file_date = file["properties"]["startDate"][:10]
                 if file_date in all_files:
@@ -283,13 +283,14 @@ def download_sentinel2_data(date_from, date_to, aoi, output_dir):
         # After done, raise a global flag that we're done
         work_queue.put(None)
 
+
     def consumer(i):
         logger.info(f"Starting consumer #{i}")
         credentials = Credentials()
         while True:
-            # 1- Retrieve one file from the work queue
+            # Retrieve one file from the work queue
             task = work_queue.get()
-            if task is None:  # Work is already
+            if task is None:  # Work is already done
                 # Replace the None marker for other consumers
                 work_queue.put(None)
                 break
@@ -306,6 +307,9 @@ def download_sentinel2_data(date_from, date_to, aoi, output_dir):
                 skipped_files.append(feature)
             else:
                 logger.error(f"Unexpected status {status}")
+
+            work_queue.task_done()  # Mark the task as done
+
 
 
     # Start one producer and # of consumers equal to number of processors * 2
