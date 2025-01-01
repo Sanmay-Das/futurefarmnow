@@ -20,21 +20,32 @@ from threading import Thread
 logger = logging.getLogger(__name__)
 
 
-def setup_logging(verbosity):
+def setup_logging(log_level):
     """
-    Configure logging based on verbosity level.
+    Configure logging based on log level.
     Args:
-        verbosity (str): Verbosity level ('quiet', 'default', 'verbose').
+        log_level (str): Log level ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL').
     """
-    log_level = {
-        "quiet": logging.ERROR,
-        "default": logging.INFO,
-        "verbose": logging.DEBUG,
-    }.get(verbosity, logging.INFO)
-    logging.basicConfig(level=log_level, format="%(asctime)s [%(levelname)s] %(message)s")
+    numeric_level = getattr(logging, log_level.upper(), logging.INFO)
+    logger.setLevel(numeric_level)
 
+    # Clear existing handlers to avoid duplicate logs
+    if logger.hasHandlers():
+        logger.handlers.clear()
 
-def create_grid(geometry, cell_size=3.0):
+    # Create a file handler
+    log_file = "sentinel2_downloader.log"
+    file_handler = logging.FileHandler(log_file, mode="a")  # Append mode
+    file_handler.setLevel(numeric_level)
+
+    # Define a log format
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    file_handler.setFormatter(formatter)
+
+    # Add the handler to the logger
+    logger.addHandler(file_handler)
+
+def create_grid(geometry, cell_size=10.0):
     """
     Create a uniform grid of polygons over the bounding box of the input geometry.
     Args:
@@ -266,12 +277,9 @@ def download_sentinel2_data(date_from, date_to, roi, output_dir):
                 if features:
                     if date not in all_files:
                         all_files[date] = []
-                    # Create a set of existing feature IDs for quick lookup
-                    existing_feature_ids = {feature["properties"]["id"] for feature in all_files[date]}
 
                     for feature in features:
-                        feature_id = feature["properties"]["id"]  # Assuming 'id' uniquely identifies the feature
-                        if feature_id not in existing_feature_ids:
+                        if feature not in all_files[date]:
                             all_files[date].append(feature)  # Add new feature
                             work_queue.put((feature, max_retries))
 
@@ -291,9 +299,8 @@ def download_sentinel2_data(date_from, date_to, roi, output_dir):
         work_queue.put(None)
 
 
-    def consumer(i):
+    def consumer(i, credentials):
         logger.debug(f"Starting downloader #{i}")
-        credentials = Credentials()
         while True:
             # Retrieve one file from the work queue
             task = work_queue.get()
@@ -318,13 +325,16 @@ def download_sentinel2_data(date_from, date_to, roi, output_dir):
 
             work_queue.task_done()  # Mark the task as done
 
-    # Start one producer and # of consumers equal to number of processors * 2
+    # Start one producer and # of consumers equal to number of processors - cpu_count()
+    # Update: Due to API limits, we only use up-to four connections
+    # See: https://documentation.dataspace.copernicus.eu/Quotas.html
+    credentials = Credentials()
     producer_thread = Thread(target=producer)
     producer_thread.start()
-
+    
     consumers = []
-    for i in range(cpu_count() * 2):
-        consumer_thread = Thread(target=consumer, args=[i])
+    for i in range(4):
+        consumer_thread = Thread(target=consumer, args=[i, credentials])
         consumers.append(consumer_thread)
         consumer_thread.start()
 
@@ -349,11 +359,14 @@ if __name__ == "__main__":
     parser.add_argument("--date-to", required=True, help="End date in the format yyyy-mm-dd.")
     parser.add_argument("--roi", required=True, help="Region of interest as GeoJSON file or WKT text.")
     parser.add_argument("--output", required=True, help="Directory to save downloaded data.")
-    parser.add_argument("--verbosity", choices=["default", "quiet", "verbose"], default="default",
-                        help="Set verbosity level: default (progress bar), quiet (no output), verbose (detailed logs).")
+    parser.add_argument("--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default="INFO",
+        help="Set logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL. Default is INFO."
+    )
 
     args = parser.parse_args()
-    setup_logging(args.verbosity)
+    setup_logging(args.log_level)
 
     # Parse the region of interest parameter
     # Load region of interest (ROI)
