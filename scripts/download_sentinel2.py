@@ -216,14 +216,14 @@ def download_and_process(feature, credentials, output_dir):
         return "error"
 
 
-def download_sentinel2_data(date_from, date_to, aoi, output_dir):
+def download_sentinel2_data(date_from, date_to, roi, output_dir):
     """
     Download Sentinel2 data for a given date range and region of interest.
 
     Args:
         date_from (str): Start date in the format 'yyyy-mm-dd'.
         date_to (str): End date in the format 'yyyy-mm-dd'.
-        aoi (geometry): The geographical area-of-interest to search in
+        roi (geometry): The geographical area-of-interest to search in
         output_dir (str): Directory to save downloaded data.
     """
     max_retries = 3
@@ -235,10 +235,10 @@ def download_sentinel2_data(date_from, date_to, aoi, output_dir):
     work_queue = Queue(maxsize=100)  # A queue of work tasks (feature, num_retries) tuples
 
     def producer():
-        logger.info("Starting producer...")
+        logger.info("Starting search process...")
 
         # 1- Break down the geometric query using a uniform grid
-        sub_geometries = create_grid(aoi)
+        sub_geometries = create_grid(roi)
         # 2- Break down the date range day-by-day
         date_ranges = split_date_range(date_from, date_to)
 
@@ -253,7 +253,7 @@ def download_sentinel2_data(date_from, date_to, aoi, output_dir):
             for sub_geometry in sub_geometries:
                 search_terms = {
                     "startDate": date,
-                    "completionDate": date,
+                    "completionDate": (datetime.strptime(date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d"),
                     "processingLevel": "S2MSI2A",
                     "geometry": sub_geometry.wkt,
                     "cloudCover": "[0,10]",
@@ -261,6 +261,8 @@ def download_sentinel2_data(date_from, date_to, aoi, output_dir):
 
                 # Run the search query and add the results the list of all_files and enqueue into the work_queue
                 features = list(query_features("Sentinel2", search_terms))
+                logger.info(f"Found {len(features)} on [{search_terms['startDate']}, {search_terms['completionDate']}]"
+                            f" with roi: '{sub_geometry.wkt}'")
                 if features:
                     if date not in all_files:
                         all_files[date] = []
@@ -285,12 +287,13 @@ def download_sentinel2_data(date_from, date_to, aoi, output_dir):
 
 
     def consumer(i):
-        logger.info(f"Starting consumer #{i}")
+        logger.info(f"Starting downloader #{i}")
         credentials = Credentials()
         while True:
             # Retrieve one file from the work queue
             task = work_queue.get()
             if task is None:  # Work is already done
+                logger.info(f"Downloader #{i} is done")
                 # Replace the None marker for other consumers
                 work_queue.put(None)
                 break
@@ -310,15 +313,13 @@ def download_sentinel2_data(date_from, date_to, aoi, output_dir):
 
             work_queue.task_done()  # Mark the task as done
 
-
-
     # Start one producer and # of consumers equal to number of processors * 2
-    producer_thread = Thread(target=producer, args=(date_from, date_to, geometry, work_queue, all_files))
+    producer_thread = Thread(target=producer)
     producer_thread.start()
 
     consumers = []
     for i in range(cpu_count() * 2):
-        consumer_thread = Thread(target=consumer, args=(work_queue, output_dir, processed_files, skipped_files, failed_files, max_retries))
+        consumer_thread = Thread(target=consumer, args=[i])
         consumers.append(consumer_thread)
         consumer_thread.start()
 
@@ -329,7 +330,7 @@ def download_sentinel2_data(date_from, date_to, aoi, output_dir):
 
     # Return a final dictionary object with number of files processed, failed, and skipped
     return {
-        "processed": len(processed_files),
+        "success": len(processed_files),
         "skipped": len(skipped_files),
         "failed": len(failed_files),
     }
@@ -362,4 +363,4 @@ if __name__ == "__main__":
         # Assume input is already a WKT string
         roi = parse_wkt(roi)
     results = download_sentinel2_data(args.date_from, args.date_to, roi, args.output)
-    logger.info(f"\nSummary: {results['success']} processed, {results['skipped']} skipped, {results['errors']} errors.")
+    logger.info(f"Summary: {results['success']} processed, {results['skipped']} skipped, {results['failed']} errors.")
