@@ -235,7 +235,7 @@ def download_sentinel2_data(date_from, date_to, roi, output_dir):
     work_queue = Queue(maxsize=100)  # A queue of work tasks (feature, num_retries) tuples
 
     def producer():
-        logger.info("Starting search process...")
+        logger.debug("Starting search process...")
 
         # 1- Break down the geometric query using a uniform grid
         sub_geometries = create_grid(roi)
@@ -247,7 +247,7 @@ def download_sentinel2_data(date_from, date_to, roi, output_dir):
             # If the day is marked as complete, skip this day
             complete_file_path = os.path.join(output_dir, date, ".complete")
             if os.path.exists(complete_file_path):
-                logger.info(f"Skipping completed day: {date}")
+                logger.debug(f"Skipping completed day: {date}")
                 continue
 
             for sub_geometry in sub_geometries:
@@ -261,14 +261,19 @@ def download_sentinel2_data(date_from, date_to, roi, output_dir):
 
                 # Run the search query and add the results the list of all_files and enqueue into the work_queue
                 features = list(query_features("Sentinel2", search_terms))
-                logger.info(f"Found {len(features)} on [{search_terms['startDate']}, {search_terms['completionDate']}]"
+                logger.debug(f"Found {len(features)} on [{search_terms['startDate']}, {search_terms['completionDate']}]"
                             f" with roi: '{sub_geometry.wkt}'")
                 if features:
                     if date not in all_files:
                         all_files[date] = []
-                    all_files[date].extend(features)
+                    # Create a set of existing feature IDs for quick lookup
+                    existing_feature_ids = {feature["properties"]["id"] for feature in all_files[date]}
+
                     for feature in features:
-                        work_queue.put((feature, max_retries))
+                        feature_id = feature["properties"]["id"]  # Assuming 'id' uniquely identifies the feature
+                        if feature_id not in existing_feature_ids:
+                            all_files[date].append(feature)  # Add new feature
+                            work_queue.put((feature, max_retries))
 
             # Track the progress and mark complete days as complete
             for file in list(processed_files) + list(skipped_files):
@@ -287,13 +292,13 @@ def download_sentinel2_data(date_from, date_to, roi, output_dir):
 
 
     def consumer(i):
-        logger.info(f"Starting downloader #{i}")
+        logger.debug(f"Starting downloader #{i}")
         credentials = Credentials()
         while True:
             # Retrieve one file from the work queue
             task = work_queue.get()
             if task is None:  # Work is already done
-                logger.info(f"Downloader #{i} is done")
+                logger.debug(f"Downloader #{i} is done")
                 # Replace the None marker for other consumers
                 work_queue.put(None)
                 break
