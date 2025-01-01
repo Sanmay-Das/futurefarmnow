@@ -35,15 +35,15 @@ def setup_logging(log_level):
 
     # Create a file handler
     log_file = "sentinel2_downloader.log"
-    file_handler = logging.FileHandler(log_file, mode="a")  # Append mode
-    file_handler.setLevel(numeric_level)
+    handler = logging.StreamHandler()
+    handler.setLevel(numeric_level)
 
     # Define a log format
     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-    file_handler.setFormatter(formatter)
+    handler.setFormatter(formatter)
 
     # Add the handler to the logger
-    logger.addHandler(file_handler)
+    logger.addHandler(handler)
 
 def create_grid(geometry, cell_size=10.0):
     """
