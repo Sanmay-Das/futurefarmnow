@@ -231,7 +231,7 @@ def download_sentinel2_data(date_from, date_to, aoi, output_dir):
     processed_files = manager.list()  # Files that have been processed successfully
     skipped_files = manager.list()  # Files that have been skipped since they are already processed
     failed_files = manager.list()  # Files that have been failed while processing
-    work_queue = Queue(maxsize=100)  # A queue of work tasks (feature, attempt) tuples
+    work_queue = Queue(maxsize=100)  # A queue of work tasks (feature, num_retries) tuples
 
     def producer():
         logger.info("Starting producer...")
@@ -243,6 +243,13 @@ def download_sentinel2_data(date_from, date_to, aoi, output_dir):
 
         # 3- Loop over the date range, for each one loop over the sub-geometries
         for date in date_ranges:
+            # If the day is marked as complete, skip this day
+            day_dir = os.path.join(output_dir, date)
+            complete_file_path = os.path.join(day_dir, ".complete")
+            if os.path.exists(complete_file_path):
+                logger.info(f"Skipping completed day: {date}")
+                continue
+
             for sub_geometry in sub_geometries:
                 search_terms = {
                     "startDate": date,
@@ -255,20 +262,26 @@ def download_sentinel2_data(date_from, date_to, aoi, output_dir):
                 # 4- Run the search query and add the results the list of all_files and enqueue into the work_queue
                 features = list(query_features("Sentinel2", search_terms))
                 if features:
+                    if date not in all_files:
+                        all_files[date] = []
                     all_files[date].extend(features)
                     for feature in features:
                         work_queue.put((feature, max_retries))
 
             # 6- Track the progress and mark complete days as complete
-            for file in (processed_files + skipped_files):
-                day = ... # TODO Parse file name to get the date in "yyyy-mm-dd" format
-                # TODO remove the file from the all_files dictionary
-                # TODO If day becomes empty, remove it from the dictionary and create a ".complete" file
-                # TODO in the corresponding output directory
+            for file in list(processed_files) + list(skipped_files):
+                file_date = file["properties"]["startDate"][:10]
+                if file_date in all_files:
+                    all_files[file_date].remove(file)
+                    if not all_files[file_date]:  # If all files for this date are processed or skipped
+                        # Mark this day as complete
+                        del all_files[file_date]
+                        day_dir = os.path.join(output_dir, file_date)
+                        with open(os.path.join(day_dir, ".complete"), "w") as complete_file:
+                            complete_file.write("")
+
         # After done, raise a global flag that we're done
         work_queue.put(None)
-
-
 
     def consumer(i):
         logger.info(f"Starting consumer #{i}")
