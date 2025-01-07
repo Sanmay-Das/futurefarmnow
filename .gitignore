@@ -3,3 +3,4 @@ data/
 wsgi/conf.py
 __pycache__/
 ffnenv/
+credentials.json

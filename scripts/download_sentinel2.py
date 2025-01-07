@@ -39,7 +39,7 @@ def setup_logging(log_level):
     handler.setLevel(numeric_level)
 
     # Define a log format
-    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    formatter = logging.Formatter("%(asctime)s %(threadName)s [%(levelname)s] %(message)s")
     handler.setFormatter(formatter)
 
     # Add the handler to the logger
@@ -205,10 +205,12 @@ def download_and_process(feature, credentials, output_dir):
 
         # Skip download if TIF already exists
         if os.path.exists(output_tif) or os.path.exists(zip_path):
+            logger.debug(f"Skipping '{output_tif}'")
             return "skip"
 
         # Download the ZIP archive
         monitor = StatusMonitor()
+        logger.info(f"Downloading '{tile_id}'")
         zip_path = download_feature(feature, date_dir, {"credentials": credentials, "monitor": monitor})
         # Ensure full path is passed to `process_zip_to_ndvi`
         zip_path = os.path.join(date_dir, zip_path)
@@ -299,8 +301,9 @@ def download_sentinel2_data(date_from, date_to, roi, output_dir):
         work_queue.put(None)
 
 
-    def consumer(i, credentials):
+    def consumer(i):
         logger.debug(f"Starting downloader #{i}")
+        credentials = Credentials()
         while True:
             # Retrieve one file from the work queue
             task = work_queue.get()
@@ -328,13 +331,12 @@ def download_sentinel2_data(date_from, date_to, roi, output_dir):
     # Start one producer and # of consumers equal to number of processors - cpu_count()
     # Update: Due to API limits, we only use up-to four connections
     # See: https://documentation.dataspace.copernicus.eu/Quotas.html
-    credentials = Credentials()
     producer_thread = Thread(target=producer)
     producer_thread.start()
     
     consumers = []
     for i in range(4):
-        consumer_thread = Thread(target=consumer, args=[i, credentials])
+        consumer_thread = Thread(target=consumer, args=[i])
         consumers.append(consumer_thread)
         consumer_thread.start()
 

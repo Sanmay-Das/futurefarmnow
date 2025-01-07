@@ -30,6 +30,15 @@ Add your login and password and adjust the permissions to the file `chmod 600 ~/
 
 To test that your credentials are correct, run `python cdse_auth.py`
 
+If you use Google Earth Engine, authenticate by running the following command:
+```shell
+earthengine authenticate
+```
+
+Set Up Google Drive API Credentials:
+Follow [this guide](https://developers.google.com/drive/api/quickstart/python) to set up the Google Drive API and download the `credentials.json` file.
+Place the `credentials.json` file in the root of your project and make sure not to commit it into your source repo.
+
 # Download Data
 To download data, use the `download_sentintel2.py` script. A sample usage is provided below.
 
