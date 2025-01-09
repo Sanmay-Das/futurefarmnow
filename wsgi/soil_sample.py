@@ -162,7 +162,7 @@ def soil_sample():
         response_json = process_request(query_params, query_geometry)
 
         # Send the response
-        return jsonify(response_json)
+        return response_json
 
     except (ValueError, json.JSONDecodeError) as e:
         import traceback
