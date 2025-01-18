@@ -65,6 +65,9 @@ def handle_exception(e):
         "stack_trace": traceback.format_exc().split("\n")
     }), 500
 
+@app.route('/vectors.json', methods=['GET'])
+def list_vectors():
+    return send_from_directory("../data", "vectors.json")
 
 if app.debug:
     # Serve static files only in development mode

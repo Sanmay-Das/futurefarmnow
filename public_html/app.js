@@ -1,11 +1,11 @@
 const { useState, useEffect, useRef } = React;
-const baseURL = "/"
-//const baseURL = "/futurefarmnow-backend-0.3-RC1/"
+//const baseURL = "http://127.0.0.1:8890/"
+const baseURL = "/futurefarmnow-backend-0.3-RC1/"
 
 const calculateLegendRanges = (globalMin, globalMax, numRanges) => {
- const range = globalMax - globalMin;
- const step = range / numRanges;
- const legendRanges = [];
+const range = globalMax - globalMin;
+const step = range / numRanges;
+const legendRanges = [];
 
  for (let i = 0; i < numRanges; i++) {
   const minValue = globalMin + step * i;
@@ -106,6 +106,9 @@ function App() {
  const [queryType, setQueryType] = useState("POLARIS"); // To store the query results
  const soilImageLayerRef = useRef(null);
  const datasetTileLayerRef = useRef(null);
+ // Define parameters for the NDVI query
+ const [fromDate, setFromDate] = useState('');
+ const [toDate, setToDate] = useState('');
 
  const handleQueryTypeChange = (event) => { setQueryType(event.target.value); };
 
@@ -122,17 +125,11 @@ function App() {
   const vectorSource = new ol.source.Vector();
 
   // Define and assign the vector layer for drawings using the vector source
-  vectorLayerRef.current = new ol.layer.Vector({
-   source: vectorSource,
-  });
+  vectorLayerRef.current = new ol.layer.Vector({ source: vectorSource });
 
-  const osmLayer = new ol.layer.Tile({
-   source: new ol.source.OSM(),
-  });
+  const osmLayer = new ol.layer.Tile({ source: new ol.source.OSM() });
 
-  const vectorLayer = new ol.layer.Vector({
-   source: new ol.source.Vector(),
-  });
+  const vectorLayer = new ol.layer.Vector({ source: new ol.source.Vector() });
 
   const soilImageLayer = new ol.layer.Image({
    source: new ol.source.ImageStatic({
@@ -190,6 +187,9 @@ function App() {
   };
  }, []);
 
+/*
+ * Handle single query polygon for POLARIS soil statistics
+ */
  const handleQuerySubmit = async (e) => {
   e.preventDefault(); // Prevent the default form submission behavior
 
@@ -258,6 +258,59 @@ function App() {
   }
  };
 
+ /*
+  * Handle single query polygon for NDVI time series
+  */
+ const handleNDVIQuerySubmit = async (e) => {
+   e.preventDefault();
+
+   if (!fromDate || !toDate || !drawnGeometry) {
+     alert('Please ensure all fields are filled and a geometry is drawn.');
+     return;
+   }
+
+   const geoJson = {
+     type: 'Polygon',
+     coordinates: drawnGeometry,
+   };
+
+   const apiUrl = `${baseURL}ndvi/singlepolygon.json?from=${fromDate}&to=${toDate}`;
+
+   try {
+     const response = await fetch(apiUrl, {
+       method: 'POST',
+       headers: {
+         'Content-Type': 'application/json',
+       },
+       body: JSON.stringify(geoJson),
+     });
+
+     const data = await response.json();
+     setQueryResults(data); // Store the NDVI results
+   } catch (error) {
+     console.error('Error fetching NDVI data:', error);
+   }
+ };
+
+ /** Handle NDVI time series for all visible polygons */
+ const handleNDVIForFarmlands = async () => {
+   const view = mapRef.current.getView();
+   const projection = view.getProjection();
+   const extent = view.calculateExtent(mapRef.current.getSize());
+   const [minx, miny, maxx, maxy] = ol.proj.transformExtent(extent, projection, 'EPSG:4326');
+
+   const apiUrl = `${baseURL}ndvi/${selectedVectorId}.json?minx=${minx}&miny=${miny}&maxx=${maxx}&maxy=${maxy}&from=${fromDate}&to=${toDate}`;
+
+   try {
+     const response = await fetch(apiUrl);
+     const data = await response.json();
+     setQueryResults(data); // Store the NDVI results for farmlands
+   } catch (error) {
+     console.error('Error fetching NDVI for farmlands:', error);
+   }
+ };
+
+
  // Dynamically update the map when selectedVectorId changes
  // Assuming this useEffect hook handles adding the dataset layer based on the selectedVectorId
  useEffect(() => {
@@ -267,6 +320,23 @@ function App() {
    }));
   }
  }, [selectedVectorId]);
+
+const NDVIChart = ({ results }) => {
+ if (!results || results.length === 0) return <div>No NDVI data available.</div>;
+
+ return (
+   <div>
+     <h3>NDVI Time Series</h3>
+     <ul>
+       {results.map(({ date, mean }) => (
+         <li key={date}>
+           {date}: {mean.toFixed(3)}
+         </li>
+       ))}
+     </ul>
+   </div>
+ );
+};
 
  const handleQueryFarmlands = async () => {
   const view = mapRef.current.getView();
@@ -356,10 +426,10 @@ function App() {
     </label>
 
     {/* Form for submitting a soil query */}
-    <form onSubmit={handleQuerySubmit}>
+    <form onSubmit={queryType === 'POLARIS' ? handleQuerySubmit : handleNDVIQuerySubmit}>
      <div className="tabs">
-       <label className={queryType === 'POLARIS' && "checked"}><input type="radio" name="queryType" value="POLARIS" checked={queryType === 'POLARIS'} onChange={handleQueryTypeChange} /> POLARIS</label>
-       <label className={queryType === 'NDVI' && "checked"}><input type="radio" name="queryType" value="NDVI" checked={queryType === 'NDVI'} onChange={handleQueryTypeChange} /> NDVI</label>
+       <label className={queryType === 'POLARIS' ? "checked" : undefined}><input type="radio" name="queryType" value="POLARIS" checked={queryType === 'POLARIS'} onChange={handleQueryTypeChange} /> POLARIS</label>
+       <label className={queryType === 'NDVI' ? "checked" : undefined}><input type="radio" name="queryType" value="NDVI" checked={queryType === 'NDVI'} onChange={handleQueryTypeChange} /> NDVI</label>
      </div>
 
      { queryType === 'POLARIS' && (
@@ -384,7 +454,7 @@ function App() {
         </select>
        </div>
        <div className="form-group">
-        <label for="layer">Soil Layer:</label>
+        <label htmlFor="layer">Soil Layer:</label>
         <select id="layer" value={layer} onChange={(e) => setLayer(e.target.value)}>
          <option value="alpha">Alpha</option>
          <option value="bd">Bulk density (g/cm3)</option>
@@ -404,21 +474,41 @@ function App() {
       </div>
      )}
 
-     {queryType === 'ndvi' && (
-       <div>
-         {/* NDVI specific form controls can be added here */}
+     {queryType === 'NDVI' && (
+       <div className="ndvi">
+         <div className="form-group">
+           <label>From Date:
+             <input
+               type="date"
+               value={fromDate}
+               onChange={(e) => setFromDate(e.target.value)}
+             />
+           </label>
+         </div>
+         <div className="form-group">
+           <label>To Date:
+             <input
+               type="date"
+               value={toDate}
+               onChange={(e) => setToDate(e.target.value)}
+             />
+           </label>
+         </div>
        </div>
      )}
 
-
-     <button type="submit">Run Soil Query</button>
+     <button type="submit">Run Selected Query</button>
      <button onClick={handleQueryFarmlands}>Query All Farmlands in View</button>
+     <button onClick={handleNDVIForFarmlands}>Query NDVI for All Farmlands in View</button>
     </form>
 
     {/* Optionally display the query results */}
     {queryResults && (
      <BoxAndWhiskerPlot results={queryResults.results} />
     )}
+
+    // Render the chart if queryType is NDVI
+    {queryType === 'NDVI' && queryResults && <NDVIChart results={queryResults.results} />}
 
     <Legend legendRanges={legendRanges} />
 
