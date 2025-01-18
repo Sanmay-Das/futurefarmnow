@@ -112,7 +112,7 @@ class NDVIServlet extends AbstractWebHandler with Logging {
         // Since we have one geometry, all the results are for a single geometry
         val mean = results
           .filter(x => x._2 != 0) // Drop empty values
-          .map(x => (x._2 - 1.0f) * (2 / 254) - 1) // Scale values from [1, 255] to [-1, +1]
+          .map(x => (x._2 - 1.0f) * (2.0f / 254) - 1) // Scale values from [1, 255] to [-1, +1]
           .aggregate((0.0F,0))((sumCount, v) => (sumCount._1 + v, sumCount._2 + 1),
           (sumCount1, sumCount2) => (sumCount1._1 + sumCount2._1, sumCount1._2 + sumCount2._2))
         (new Path(matchingRasterDir).getName, mean._1 / mean._2)
@@ -284,9 +284,13 @@ class NDVIServlet extends AbstractWebHandler with Logging {
 
 object NDVIServlet {
   def dateRangeOverlap(from: String, to: String, date: String): Boolean = {
-    val fromParts = from.split("-").map(_.toInt)
-    val toParts = to.split("-").map(_.toInt)
-    val dateParts = date.split("-").map(_.toInt)
-    fromParts.indices.forall(i => dateParts(i) >= fromParts(i) && dateParts(i) <= toParts(i))
+    try {
+      val fromParts = from.split("-").map(_.toInt)
+      val toParts = to.split("-").map(_.toInt)
+      val dateParts = date.split("-").map(_.toInt)
+      fromParts.indices.forall(i => dateParts(i) >= fromParts(i) && dateParts(i) <= toParts(i))
+    } catch {
+      case _: NumberFormatException => false
+    }
   }
 }
