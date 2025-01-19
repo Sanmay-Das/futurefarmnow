@@ -195,7 +195,7 @@ def mbr_overlap(polygon_mbr, file_mbr):
 def index_directories_recursively(root_directory):
     """
     Recursively index all directories that contain at least one .tif file under the root_directory.
-    If a directory already contains an _index.csv file, skip creating a new one.
+    If a directory already contains an _index.csv file that is newer than all .tif files, skip creating a new one.
 
     :param root_directory: The root directory to start searching for .tif files.
     """
@@ -206,12 +206,21 @@ def index_directories_recursively(root_directory):
         if tif_files:
             index_path = os.path.join(dirpath, INDEX_FILE)
 
-            # If the index file already exists, skip this directory
+            # If the index file exists, compare timestamps
             if os.path.exists(index_path):
-                print(f"Index file already exists in {dirpath}. Skipping.")
-            else:
-                print(f"Creating index for {dirpath}...")
-                create_index(dirpath)
+                index_mod_time = os.path.getmtime(index_path)
+                tif_files_mod_times = [
+                    os.path.getmtime(os.path.join(dirpath, f)) for f in tif_files
+                ]
+
+                # Skip if the index file is newer than all .tif files
+                if all(index_mod_time >= tif_mod_time for tif_mod_time in tif_files_mod_times):
+                    print(f"Index file in {dirpath} is up-to-date. Skipping.")
+                    continue
+
+            # Create a new index if not skipped
+            print(f"Creating index for {dirpath}...")
+            create_index(dirpath)
 
 def main():
     """
