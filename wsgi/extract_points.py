@@ -79,7 +79,7 @@ def find_matching_tif_files(index_csv_path, input_wkt, input_crs = 4326):
         return []
 
 
-
+#There is no indexing by default
 def output_from_attr(input_dir, wkt, depth_range, attribute_list=[], num_samples=0, output_name='output'):
     output_df = pd.DataFrame({'x': [], 'y': []})
     
@@ -158,6 +158,9 @@ def output_from_attr(input_dir, wkt, depth_range, attribute_list=[], num_samples
         os.chdir('..') 
     os.chdir('..')
     output_df = output_df.dropna().reset_index(drop=True)
+    if len(attribute_list) <= 1:
+        #if one attribute (this is done so choose_points algoirthm works, as it was not designed to do such)
+        output_df[str(attribute_list[-1]) + '_dup'] = output_df.iloc[:, -1]
     if num_samples > 0 and len(output_df) >= num_samples:
         output_df.to_csv(output_name + '.csv', index=False)
         return output_df
