@@ -407,7 +407,7 @@ def select_points(df, num_samples=10, epsg_code = 32618, scalar_scheme = 'Standa
             if score > final_score:
                 final_score = score
                 final_result = idx
-    ndf = pd.DataFrame(Geo_space_XY[final_result], columns=[lat, lon])
+    ndf = pd.DataFrame(Geo_space_XY[final_result].reshape(-1, 2), columns=[lat, lon])
     ndf.to_csv(f"{output_name}.csv", index=None)
     return ndf
 
