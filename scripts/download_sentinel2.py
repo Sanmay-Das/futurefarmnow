@@ -288,7 +288,7 @@ def download_sentinel2_data(date_from, date_to, roi, output_dir):
             # Track the progress and mark complete days as complete
             for file in list(processed_files) + list(skipped_files):
                 file_date = file["properties"]["startDate"][:10]
-                if file_date in all_files:
+                if file_date in all_files and file in all_files[file_date]:
                     all_files[file_date].remove(file)
                     if not all_files[file_date]:  # If all files for this date are processed or skipped
                         # Mark this day as complete
@@ -300,33 +300,38 @@ def download_sentinel2_data(date_from, date_to, roi, output_dir):
         # After done, raise a global flag that we're done
         work_queue.put(None)
 
-
     def consumer(i):
         logger.debug(f"Starting downloader #{i}")
         credentials = Credentials()
         while True:
-            # Retrieve one file from the work queue
-            task = work_queue.get()
-            if task is None:  # Work is already done
-                logger.debug(f"Downloader #{i} is done")
-                # Replace the None marker for other consumers
-                work_queue.put(None)
-                break
+            try:
+                # Retrieve one file from the work queue
+                logger.info(f"Trying to get a task #{i}")
+                task = work_queue.get()
+                if task is None:  # Work is already done
+                    logger.debug(f"Downloader #{i} is done")
+                    # Replace the None marker for other consumers
+                    work_queue.put(None)
+                    break
 
-            feature, retries = task
-            status = download_and_process(feature, credentials, output_dir)
-            if status == "success":
-                processed_files.append(feature)
-            elif status == "error" and retries > 0:
-                work_queue.put((feature, retries - 1))
-            elif status == "error" and retries == 0:
-                failed_files.append(feature)
-            elif status == "skip":
-                skipped_files.append(feature)
-            else:
-                logger.error(f"Unexpected status {status}")
+                logger.info(f"#{i} Received task #{task}")
+                feature, retries = task
+                status = download_and_process(feature, credentials, output_dir)
+                if status == "success":
+                    processed_files.append(feature)
+                elif status == "error" and retries > 0:
+                    work_queue.put((feature, retries - 1))
+                elif status == "error" and retries == 0:
+                    failed_files.append(feature)
+                elif status == "skip":
+                    skipped_files.append(feature)
+                else:
+                    logger.error(f"Unexpected status {status}")
 
-            work_queue.task_done()  # Mark the task as done
+                work_queue.task_done()  # Mark the task as done
+            except Exception as e:
+                logger.error(f"Error in consumer #{i}: {e}")
+                continue  # Skip the failed task and continue with the next one
 
     # Start one producer and # of consumers equal to number of processors - cpu_count()
     # Update: Due to API limits, we only use up-to four connections
