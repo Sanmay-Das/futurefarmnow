@@ -6,25 +6,12 @@ import os
 import pandas as pd
 from pyproj import Proj, transform
 from pyproj import Proj, Transformer
-def extract_pixel_coords(input_tif_path, wkt, target_crs="EPSG:4326", nodata=-9999):
-    # Check if the file exists before trying to open it
-    if not os.path.exists(input_tif_path):
-        print(f"File does not exist: {input_tif_path}")
-        return None, None, None  # Return None to indicate the failure to process the file
-    
+def extract_pixel_coords(input_tif_path, geometry, target_crs="EPSG:4326", nodata = -9999):
     with rasterio.open(input_tif_path) as src:
-        geometry = wkt_loads(wkt)
-        
         src_crs = src.crs
         
-        # Mask out the raster by the polygon
         masked_data, masked_transform = mask(src, [geometry], crop=True)
         masked_band = masked_data[0]
-        
-        # If there's no valid data, return None
-        if np.all(masked_band == nodata):
-            print(f"No valid data found for polygon in file: {input_tif_path}")
-            return None, None, None
         
         nrows, ncols = masked_band.shape
         pixel_width = masked_transform.a
@@ -38,8 +25,6 @@ def extract_pixel_coords(input_tif_path, wkt, target_crs="EPSG:4326", nodata=-99
         y = np.array(y.ravel())
         values = np.array(masked_band.ravel())
         values[values == nodata] = np.nan
-        
-        # Transform coordinates if necessary
         if src_crs != target_crs:
             proj_from = Proj(src_crs) 
             proj_to = Proj(target_crs) 
@@ -78,65 +63,34 @@ def find_matching_tif_files(index_csv_path, input_wkt, input_crs = 4326):
         print("No matching files found.")
         return []
 
-
-#There is no indexing by default
-def output_from_attr(input_dir, wkt, depth_range, attribute_list=[], num_samples=0, output_name='output'):
+#No Indexing by default
+def output_from_attr(input_dir, geometry, depth_range, attribute_list=[], num_samples=0, output_name='output'):
     output_df = pd.DataFrame({'x': [], 'y': []})
     
-    try:
-        depth_min, depth_max = map(int, depth_range.split('-'))
-    except ValueError:
-        print('Invalid depth range. Correct format: "min-max" (e.g., "0-15").')
-        return
-
-    if not os.path.exists(input_dir):
-        print(f"Input directory '{input_dir}' does not exist.")
-        return
-    
-    os.chdir(input_dir)
-    
-    for attr in attribute_list:
-        if not os.path.exists(attr):
-            print(f"Directory for attribute '{attr}' does not exist.")
-            continue
+    import soil
+    for layer in attribute_list:
+        matching_subdirs = soil.get_matching_subdirectories(input_dir, depth_range, layer)
+        explore_depths_list = [
+                                  (name, int(yyy) - int(xxx))
+                                  for name in matching_subdirs
+                                  if (parts := os.path.basename(name).split('_')) and len(parts) >= 3
+                                  for xxx, yyy in [(parts[0], parts[1])]
+                              ]
         
-        os.chdir(attr)
-        explore_depths_list = []
-        
-        for sub_dir in os.listdir():
-            try:
-                dir_depths = list(map(int, sub_dir.split('_')[:-1]))
-                if len(dir_depths) == 2 and depth_min <= dir_depths[0] <= depth_max:
-                    explore_depths_list.append((sub_dir, dir_depths[1] - dir_depths[0]))
-            except ValueError:
-                print(f"Skipping invalid directory '{sub_dir}'.")
-                continue
-        
-        print(f"Found explore depths for '{attr}': {explore_depths_list}")
+        print(f"Found explore depths for '{layer}': {explore_depths_list}")
 
         if explore_depths_list:
             combined_values = {}
             total_factor = 0
-            
+
             for depth_dir, factor in explore_depths_list:
-                os.chdir(depth_dir)
-                matching_files = find_matching_tif_files('_index.csv', wkt)
-                
-                if not matching_files:
-                    print(f"No matching TIF files found in directory '{depth_dir}'. Skipping this directory.")
-                    continue
-                
+                import gridex
+                matching_files = gridex.query_index(depth_dir, geometry)
+                print(f"Matched files: {matching_files}")
+
                 for file in matching_files:
-                    if not os.path.exists(file):
-                        print(f"File does not exist: {file}. Skipping.")
-                        continue
-                    
-                    x_coords, y_coords, pixel_values = extract_pixel_coords(file, wkt)
-                    
-                    if x_coords is None or y_coords is None or pixel_values is None:
-                        print(f"Skipping file '{file}' due to lack of overlap or valid data.")
-                        continue
-                    
+                    x_coords, y_coords, pixel_values = extract_pixel_coords(os.path.join(depth_dir, file), geometry)
+
                     for i in range(len(x_coords)):
                         point_key = (x_coords[i], y_coords[i])
                         if point_key in combined_values:
@@ -145,18 +99,16 @@ def output_from_attr(input_dir, wkt, depth_range, attribute_list=[], num_samples
                             combined_values[point_key] = pixel_values[i] * factor
                 
                 total_factor += factor
-                os.chdir('..') 
-            
+
             combined_df = pd.DataFrame(
                 [(x, y, value / total_factor) for (x, y), value in combined_values.items()],
-                columns=['x', 'y', attr]
+                columns=['x', 'y', layer]
             )
             output_df = pd.merge(output_df, combined_df, on=['x', 'y'], how='outer')
         else:
-            print(f"No valid directories found for attribute '{attr}' within the specified depth range.")
-        
-        os.chdir('..') 
-    os.chdir('..')
+            print(f"No valid directories found for attribute '{layer}' within the specified depth range.")
+
+    output_df = output_df.dropna().reset_index(drop=True)
     output_df = output_df.dropna().reset_index(drop=True)
     if len(attribute_list) <= 1:
         #if one attribute (this is done so choose_points algoirthm works, as it was not designed to do such)
