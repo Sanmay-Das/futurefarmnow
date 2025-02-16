@@ -300,55 +300,70 @@ def download_sentinel2_data(date_from, date_to, roi, output_dir):
         # After done, raise a global flag that we're done
         work_queue.put(None)
 
-    def consumer(i):
-        logger.debug(f"Starting downloader #{i}")
+    def consumer():
+        logger.debug("Starting downloader")
         credentials = Credentials()
         while True:
             try:
                 # Retrieve one file from the work queue
-                logger.info(f"Trying to get a task #{i}")
                 task = work_queue.get()
                 if task is None:  # Work is already done
-                    logger.debug(f"Downloader #{i} is done")
+                    logger.debug("Downloader is done")
+                    work_queue.task_done()  # Mark the task as done
                     # Replace the None marker for other consumers
                     work_queue.put(None)
                     break
 
-                logger.info(f"#{i} Received task #{task}")
                 feature, retries = task
-                status = download_and_process(feature, credentials, output_dir)
-                if status == "success":
-                    processed_files.append(feature)
-                elif status == "error" and retries > 0:
-                    work_queue.put((feature, retries - 1))
-                elif status == "error" and retries == 0:
-                    failed_files.append(feature)
-                elif status == "skip":
-                    skipped_files.append(feature)
-                else:
-                    logger.error(f"Unexpected status {status}")
+
+                while retries >= 0:
+                    status = download_and_process(feature, credentials, output_dir)
+
+                    if status == "success":
+                        processed_files.append(feature)
+                        break  # Stop retrying on success
+                    elif status == "error" and retries > 0:
+                        logger.warning(f"Retrying {feature}, remaining attempts: {retries}")
+                        retries -= 1
+                    elif status == "error" and retries == 0:
+                        failed_files.append(feature)
+                        break  # Stop retrying on failure
+                    elif status == "skip":
+                        skipped_files.append(feature)
+                        break  # No need to retry skipped items
+                    else:
+                        logger.error(f"Unexpected status {status}")
+                        break  # Prevent infinite loops on unknown errors
 
                 work_queue.task_done()  # Mark the task as done
             except Exception as e:
-                logger.error(f"Error in consumer #{i}: {e}")
+                work_queue.task_done()  # Mark the task as done
+                logger.error(f"Error in consumer: {e}")
                 continue  # Skip the failed task and continue with the next one
 
     # Start one producer and # of consumers equal to number of processors - cpu_count()
     # Update: Due to API limits, we only use up-to four connections
     # See: https://documentation.dataspace.copernicus.eu/Quotas.html
-    producer_thread = Thread(target=producer)
+    producer_thread = Thread(target=producer, name="producer")
     producer_thread.start()
     
     consumers = []
     for i in range(4):
-        consumer_thread = Thread(target=consumer, args=[i])
+        consumer_thread = Thread(target=consumer, name=f"consumer #{i}")
         consumers.append(consumer_thread)
         consumer_thread.start()
 
     # Wait until all is done
-    producer_thread.join()
-    for consumer_thread in consumers:
-        consumer_thread.join()
+    while producer_thread.is_alive() or any(t.is_alive() for t in consumers):
+        logger.info("Checking thread statuses:")
+        logger.info(f"Producer thread alive: {producer_thread.is_alive()}")
+        for i, t in enumerate(consumers):
+            logger.info(f"Consumer #{i} alive: {t.is_alive()}")
+
+        # Attempt to join with timeout, allowing early termination
+        producer_thread.join(timeout=60)
+        for consumer_thread in consumers:
+            consumer_thread.join(timeout=60)
 
     # Return a final dictionary object with number of files processed, failed, and skipped
     return {
