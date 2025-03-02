@@ -2,11 +2,10 @@ import rasterio
 import numpy as np
 from rasterio.mask import mask
 from shapely.wkt import loads as wkt_loads
-from shapely.geometry import Polygon
 import os
 import pandas as pd
 from pyproj import Proj, transform
-
+from pyproj import Proj, Transformer
 def extract_pixel_coords(input_tif_path, geometry, target_crs="EPSG:4326", nodata = -9999):
     with rasterio.open(input_tif_path) as src:
         src_crs = src.crs
@@ -33,10 +32,9 @@ def extract_pixel_coords(input_tif_path, geometry, target_crs="EPSG:4326", nodat
 
         return x, y, values
 
-### --9999 no datta
+#No Indexing by default
 def output_from_attr(input_dir, geometry, depth_range, attribute_list=[], num_samples=0, output_name='output'):
     output_df = pd.DataFrame({'x': [], 'y': []})
-    
     import soil
     for layer in attribute_list:
         matching_subdirs = soil.get_matching_subdirectories(input_dir, depth_range, layer)
@@ -79,6 +77,10 @@ def output_from_attr(input_dir, geometry, depth_range, attribute_list=[], num_sa
             print(f"No valid directories found for attribute '{layer}' within the specified depth range.")
 
     output_df = output_df.dropna().reset_index(drop=True)
+    output_df = output_df.dropna().reset_index(drop=True)
+    if len(attribute_list) <= 1:
+        #if one attribute (this is done so choose_points algoirthm works, as it was not designed to do such)
+        output_df[str(attribute_list[-1]) + '_dup'] = output_df.iloc[:, -1]
     if num_samples > 0 and len(output_df) >= num_samples:
         output_df.to_csv(output_name + '.csv', index=False)
         return output_df
