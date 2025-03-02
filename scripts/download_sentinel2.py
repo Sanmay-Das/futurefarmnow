@@ -344,6 +344,7 @@ def download_sentinel2_data(date_from, date_to, roi, output_dir):
     # Start one producer and # of consumers equal to number of processors - cpu_count()
     # Update: Due to API limits, we only use up-to four connections
     # See: https://documentation.dataspace.copernicus.eu/Quotas.html
+    # See: Number of concurrent connections limit (IAD=Immediately Available Data) is 4
     producer_thread = Thread(target=producer, name="producer")
     producer_thread.start()
     

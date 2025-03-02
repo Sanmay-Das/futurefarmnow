@@ -38,7 +38,6 @@ class NDVIServlet extends AbstractWebHandler with Logging {
     ndviDataPath = new Path(dataPath, "NDVI")
 
     // Build indexes if not existent
-    logInfo("Building raster indexes for NDVI")
     val sc = ss.sparkContext
     val fs = ndviDataPath.getFileSystem(sc.hadoopConfiguration)
     val directories = fs.listStatus(ndviDataPath,
@@ -82,6 +81,7 @@ class NDVIServlet extends AbstractWebHandler with Logging {
     val matchingRasterDirs: Array[String] = fileSystem.listStatus(ndviDataPath,
       (path: Path) => NDVIServlet.dateRangeOverlap(dateFrom, dateTo, path.getName))
       .map(_.getPath.toString)
+    logDebug(s"Query matched dirs: ${matchingRasterDirs.mkString(",")}")
 
     val baos = new ByteArrayOutputStream
     val input = request.getInputStream
@@ -103,19 +103,24 @@ class NDVIServlet extends AbstractWebHandler with Logging {
 
     // Now that we have the query geometry, loop over al matching directories and run the NDVI query
     val results: Array[(String, Float)] = matchingRasterDirs.map(matchingRasterDir => {
-      val matchingFiles = RasterFileRDD.selectFiles(fileSystem, matchingRasterDir, geom)
+      val matchingFiles: Array[String] = RasterFileRDD.selectFiles(fileSystem, matchingRasterDir, geom)
+      logDebug(s"Query matched files: ${matchingFiles.mkString(",")}")
       if (matchingFiles.isEmpty)
         null
       else {
         // Use RaptorJoin to find the results
         val results = SingleMachineRaptorJoin.raptorJoin[Int](matchingFiles, Array(geom))
-        // Since we have one geometry, all the results are for a single geometry
-        val mean = results
-          .filter(x => x._2 != 0) // Drop empty values
-          .map(x => (x._2 - 1.0f) * (2.0f / 254) - 1) // Scale values from [1, 255] to [-1, +1]
-          .aggregate((0.0F,0))((sumCount, v) => (sumCount._1 + v, sumCount._2 + 1),
-          (sumCount1, sumCount2) => (sumCount1._1 + sumCount2._1, sumCount1._2 + sumCount2._2))
-        (new Path(matchingRasterDir).getName, mean._1 / mean._2)
+        if (results == null) {
+          null
+        } else {
+          // Since we have one geometry, all the results are for a single geometry
+          val mean = results
+            .filter(x => x._2 != 0) // Drop empty values
+            .map(x => (x._2 - 1.0f) * (2.0f / 254) - 1) // Scale values from [1, 255] to [-1, +1]
+            .aggregate((0.0F, 0))((sumCount, v) => (sumCount._1 + v, sumCount._2 + 1),
+              (sumCount1, sumCount2) => (sumCount1._1 + sumCount2._1, sumCount1._2 + sumCount2._2))
+          (new Path(matchingRasterDir).getName, mean._1 / mean._2)
+        }
       }
     }).filter(_ != null)
 
@@ -139,6 +144,7 @@ class NDVIServlet extends AbstractWebHandler with Logging {
 
     // Create a root node that contains queryNode and resultsNode
     val rootNode = mapper.createObjectNode
+    rootNode.put("engine", "Beast")
     rootNode.set("query", queryNode)
     rootNode.set("results", resultsNode)
 
@@ -271,6 +277,7 @@ class NDVIServlet extends AbstractWebHandler with Logging {
     // create root node// create root node
     // contains queryNode and resultsNode// contains queryNode and resultsNode
     val rootNode = mapper.createObjectNode
+    rootNode.put("engine", "Beast")
     rootNode.set("query", queryNode)
     rootNode.set("results", resultsNode)
 
@@ -284,13 +291,7 @@ class NDVIServlet extends AbstractWebHandler with Logging {
 
 object NDVIServlet {
   def dateRangeOverlap(from: String, to: String, date: String): Boolean = {
-    try {
-      val fromParts = from.split("-").map(_.toInt)
-      val toParts = to.split("-").map(_.toInt)
-      val dateParts = date.split("-").map(_.toInt)
-      fromParts.indices.forall(i => dateParts(i) >= fromParts(i) && dateParts(i) <= toParts(i))
-    } catch {
-      case _: NumberFormatException => false
-    }
+    // Since the string format is yyyy-mm-dd, we can just compare using string
+    date >= from && date <= to
   }
 }
