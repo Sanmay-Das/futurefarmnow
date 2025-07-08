@@ -170,244 +170,184 @@ def iter_combinations(num_combs=np.nan, filtered_distances = None, filtered_indi
 #outlier technique is important, so is scaler, we need a way to analyze scatter plot distribution so the scaler and outlier don't need to be chosen by the user
 #scalar_scheme can be: StandardScaler, RobustScaler, PowerTransformer
 #outlier tecnhique can be: IQR Thresholding, Mahalanobis Distance, Elliptic Envelope
-def select_points(df, num_samples=10, epsg_code = 32618, scalar_scheme = 'StandardScaler', outlier_technique = 'IQR Thresholding',weight = 0.5, Morgans = False, output_name = 'results'):
-    Sample_IDx_FID = list(range(len(df)))
+
+def select_points(df, num_samples=10, epsg_code=32618, scalar_scheme='StandardScaler', 
+                 outlier_technique='IQR Thresholding', weight=0.5, Morgans=False, 
+                 output_name='results'):
+    # Extract coordinate columns
     lat = df.columns[0]
     lon = df.columns[1]
     
-    chosen_cols = []
+    # Select feature columns
+    selected_df = df.drop(columns=[lat, lon])
     
-    for col in df.columns:
-        if col not in[lat,lon]:
-            chosen_cols.append(True)            
-            
-    mask = [i for i in chosen_cols]
-    
-    selected_df = df.loc[:, df.columns.drop(lat).drop(lon)[mask]]
-    
-    geometry = [Point(xy) for xy in df.loc[:,[lat,lon]].values]
+    # Create GeoDataFrame
+    geometry = [Point(xy) for xy in df.loc[:,[lat, lon]].values]
     gdf = gpd.GeoDataFrame(selected_df, geometry=geometry)
     gdf.crs = f"EPSG:{epsg_code}"
 
+    # Apply scaling
     scaler = {
-    'RobustScaler'     : RobustScaler(),
-    'StandardScaler'   : StandardScaler(),
-    'PowerTransformer' : PowerTransformer()
+        'RobustScaler': RobustScaler(),
+        'StandardScaler': StandardScaler(),
+        'PowerTransformer': PowerTransformer()
     }[scalar_scheme]
     
     X_scaled = scaler.fit_transform(selected_df.values)
-    pca = PCA(n_components=X_scaled.shape[1])
-    X_pca = pca.fit_transform(X_scaled)
     
-    cumulative_variance = np.cumsum(pca.explained_variance_ratio_)
-    cdf = pd.DataFrame(np.multiply(cumulative_variance, 100).round(3).reshape(1,-1).tolist(), columns=list(range(1,len(cumulative_variance)+1)), index=["% cumulative variance captured :"])
-
-    pca_selection = 2
-    
-    whitten = 5
-    threshold = 0.5
-
-    pca = PCA(n_components=pca_selection)
+    # Apply PCA and outlier detection
+    pca = PCA(n_components=2)
     PCs = pca.fit_transform(X_scaled)
     
     rows_to_keep = np.ones(PCs.shape[0], dtype=bool)
-    filtered_Pcs = PCs[:,:]
-    preferedPCs = None
-    filtered_distances = None
-    filtered_indices = None
-    Geo_space_XY = None
-    Var_space_XY = None
-    epsilion = 1e-7# change this
-    NNearest_neighbour = 3 # change this
-
-    allowed_samples = [5, 10, 12, 15, 20]# change this
-    design = generate_design(filtered_Pcs, num_samples, whitten)
-
+    threshold = 0.5
+    
     if outlier_technique == 'IQR Thresholding':
         rows_to_keep = IQR_outliers(PCs, threshold)
     elif outlier_technique == 'Mahalanobis Distance':
-        if threshold > 1:
-            threshold = 1
+        if threshold > 1: threshold = 1
         rows_to_keep = mahalanobis_outliers(PCs, threshold)
     elif outlier_technique == 'Elliptic Envelope':
-        if threshold > 0.5:
-            threshold = 0.5
+        if threshold > 0.5: threshold = 0.5
         rows_to_keep = elliptic_envelope_outliers(PCs, threshold)
-    filtered_Pcs = PCs[rows_to_keep] # Convert filtered_data list to a NumPy array
-    outliers_Pcs = PCs[~rows_to_keep] # Convert filtered_data list to a NumPy array
-        
-    design, _ = generate_design(filtered_Pcs, num_samples, whitten)
-
-    Geo_space_X = df.loc[rows_to_keep, lat]
-    Geo_space_Y = df.loc[rows_to_keep, lon]
-    Geo_space_XY = np.array([Geo_space_X, Geo_space_Y]).T
+    
+    filtered_Pcs = PCs[rows_to_keep]
+    
+    # Generate design
+    design, _ = generate_design(filtered_Pcs, num_samples, whitten=5)
+    
+    # Reduce design to exact requested sample count
+    if len(design) > num_samples:
+        dist_matrix = pairwise_distances(design)
+        centrality = np.sum(dist_matrix, axis=1)
+        most_central_indices = np.argsort(centrality)[:num_samples]
+        design = design[most_central_indices]
+    elif len(design) < num_samples:
+        num_samples = len(design)
+    
+    # Create spatial and feature arrays
+    Geo_space_XY = df.loc[rows_to_keep, [lat, lon]].values
     Var_space_XY = filtered_Pcs
-    max_dist = np.max(distance_matrix(Geo_space_XY,
-                           Geo_space_XY))
-    geo_max = max_dist
-    geo_min = 0 + epsilion
-    var_max = .25 # change this
-    var_min = 0 + epsilion
     
-    prefered_lon = None
-    prefered_lat = None
-    if prefered_lon:
-        preferedPCs = []
-        kriging_models = [OrdinaryKriging(Geo_space_Y, Geo_space_X, Var_space_XY[:, i], variogram_model='spherical') for i in range(PCs.shape[1])]
-        for kriging_model in kriging_models:
-            predicted_value, predicted_std = kriging_model.execute('points', prefered_lon, prefered_lat)
-            preferedPCs.append(predicted_value.data)
-        preferedPCs = np.vstack(preferedPCs).T
-
+    # Find nearest neighbors in feature space
     tree = KDTree(Var_space_XY)
+    NNearest_neighbour = min(5, len(Var_space_XY))
+    var_max = 0.4
     distances, indices = tree.query(design, k=NNearest_neighbour)
-    ind_ko = np.unique(indices)
+    
+    # Filter candidates within allowed distance
     valid_indices = distances < var_max
-    filtered_distances = [distances[i][valid_i] for i, valid_i in enumerate(valid_indices)]
-    filtered_indices = [indices[i][valid_i] for i, valid_i in enumerate(valid_indices)]
-    ind_ko = np.unique(indices[valid_indices])
-    avg = np.average(distances, axis=1)
+    filtered_indices = [indices[i][valid_indices[i]] for i in range(len(design))]
+    filtered_distances = [distances[i][valid_indices[i]] for i in range(len(design))]
     
-    print(filtered_indices)
-    
-    if (np.min(distances, axis=1) > var_max).any():
-        print("\x1b[31mError: scaled design does not fit in varibale scale, please refer to graph to fit the design properly \x1b[0m")
-    elif (avg > var_max).any():
-        print('''\x1b[33mWarning: scaled design is not a good fit in varibale scale,
-                 kindly readjust the thresholds and try again for better fit
-                 or try using a different scaler to change the distribution \x1b[0m''')
-    # finding unique ind across all design points
-    assigned_to = {}  # Tracks which design point an index is assigned to
-    point_counts = np.zeros(len(design), dtype=int)  # Tracks how many points are assigned to each design point
     for i in range(len(design)):
-        for j in range(NNearest_neighbour):
-            if not valid_indices[i][j]:
-                break
-            idx = indices[i][j]
-            dist = distances[i][j]
-            # Check if the index is already assigned
-            if idx in assigned_to:
-                # Retrieve previously assigned design point and distance
-                prev_i, prev_dist = assigned_to[idx]
-                if dist < prev_dist or (dist == prev_dist and point_counts[i] < point_counts[prev_i]):
-                    # Update assignment if current design point is closer or equally close but has fewer points
-                    point_counts[prev_i] -= 1
-                    point_counts[i] += 1
-                    assigned_to[idx] = (i, dist)
-            else:
-                # Assign index to the current design point
+        if len(filtered_indices[i]) == 0:
+            dist_to_design = np.linalg.norm(Var_space_XY - design[i], axis=1)
+            closest_idx = np.argmin(dist_to_design)
+            filtered_indices[i] = [closest_idx]
+            filtered_distances[i] = [dist_to_design[closest_idx]]
+            print(f"\x1b[33mWarning: No candidates for design point {i}, using closest point {closest_idx}\x1b[0m")
+    
+    assigned_to = {}
+    for i in range(len(design)):
+        for idx, dist in zip(filtered_indices[i], filtered_distances[i]):
+            if idx not in assigned_to:
                 assigned_to[idx] = (i, dist)
-                point_counts[i] += 1
-    # Construct the final list of assigned indices for each design point
+            else:
+                _, prev_dist = assigned_to[idx]
+                if dist < prev_dist:
+                    assigned_to[idx] = (i, dist)
+    
+    # Rebuild candidate lists with unique assignments
     assigned_indices = [[] for _ in range(len(design))]
     for idx, (i, _) in assigned_to.items():
         assigned_indices[i].append(idx)
-    # Optionally, convert each list of indices to a NumPy array
-    assigned_indices = [np.array(lst) for lst in assigned_indices]
-    filtered_indices = assigned_indices
     
-    mat_dist = distance_matrix(Geo_space_XY,Geo_space_XY)
-
-    np.fill_diagonal(mat_dist, np.nan)
-    geo_max = np.nanmax(mat_dist)
-    geo_min = np.nanmin(mat_dist) + epsilion
-    var_max = .4 # change this
+    # Ensure each design point has at least one candidate
+    for i in range(len(assigned_indices)):
+        if len(assigned_indices[i]) == 0:
+            # Find the closest unassigned point
+            unassigned = [idx for idx in range(len(Var_space_XY)) if idx not in assigned_to]
+            if unassigned:
+                dist_to_design = np.linalg.norm(Var_space_XY[unassigned] - design[i], axis=1)
+                closest_idx = unassigned[np.argmin(dist_to_design)]
+                assigned_indices[i] = [closest_idx]
+                assigned_to[closest_idx] = (i, np.min(dist_to_design))
+                print(f"\x1b[33mWarning: Added fallback point {closest_idx} for design point {i}\x1b[0m")
+    
+    filtered_indices = [np.array(lst) for lst in assigned_indices]
+    
+    epsilion = 1e-7
+    geo_dist_matrix = distance_matrix(Geo_space_XY, Geo_space_XY)
+    np.fill_diagonal(geo_dist_matrix, np.inf)
+    geo_max = np.nanmax(geo_dist_matrix)
+    geo_min = np.nanmin(geo_dist_matrix) + epsilion
     var_min = 0 + epsilion
-
-    scale_geo = lambda x: (x - geo_min)/(geo_max - geo_min)*3 #scale between 0 ~ 3
-    scale_var = lambda x: (x - var_min)/(var_max - var_min)*3 #scale between 0 ~ 3
-
-    filtered_distances = [
-        distance.cdist([design[i]], Var_space_XY[e], metric='euclidean').flatten()
-        if len(e) > 0 else np.array([])  # Return an empty array for empty subsets
-        for i, e in enumerate(filtered_indices)
-    ]
-
-    # now check which point belong to which group or if it belongs to a group at all?? must use? create a symmetric point in XY plane? more than 2 axis???
-    if prefered_lat:
-        x = distance_matrix(design, preferedPCs)
-        prefered_mask = (x < var_max).any(axis=0)
-        _prefered_lat_lon = np.array([prefered_lat, prefered_lon]).T
-        Var_space_XY = np.vstack([Var_space_XY, preferedPCs[prefered_mask]])
-        Geo_space_XY = np.vstack([Geo_space_XY, _prefered_lat_lon[prefered_mask]])
-
-        kept_prefered_points = x[x < var_max]
-        c = 0
-        for i,e in tqdm(enumerate((x < var_max).any(axis=1))):
-            if e:
-                filtered_indices[i] = np.array([len(Var_space_XY)-len(kept_prefered_points)+c])
-                filtered_distances[i] =  np.array([kept_prefered_points[c]])
-                c+=1
-    arr = np.array(list(map(lambda x: x[0] + x[1], iter_combinations(num_combs=4600000, filtered_distances= filtered_distances, filtered_indices= filtered_indices))))
-    W = weight
-    final_score = float('-inf')
-    threshold = geo_min
-    final_result = None
-    features = Var_space_XY.shape[1]
-    for i in tqdm(arr):
-        idx = i[design.shape[0]:].astype(int)
-        dist_matrix = distance_matrix(Geo_space_XY[idx],
-                                    Geo_space_XY[idx])
-        np.fill_diagonal(dist_matrix, np.inf)
-        dgmin = np.nanmin(dist_matrix)
-        dvmax = i[:design.shape[0]].max()
-
-        dgmin = scale_geo(dgmin)
-        dvmax = scale_var(dvmax)
-
-        score = (- W * scale_var(dvmax)) + (1-W) * scale_geo(dgmin)
-        if score > final_score:
-            final_score = score
-            final_result = idx
-    #Morgans:
-    if Morgans:
-        # @title Consideration of Moran's I (optional)
-        # @markdown running this cell will negate the use of above algorithm and run Moran'I optimization critera instead
-        arr = np.array(list(map(lambda x: x[0] + x[1], iter_combinations(num_combs=4600000))))
-        W1 = 0.4  # Example weight for dgmin
-        W2 = 0.3  # Example weight for dvmax
-        W3 = 0.3  # Example weight for Moran's I
-        final_score = float('-inf')
-        final_result = None
-        features = Var_space_XY.shape[1]
-
-        for i in tqdm(arr):
-            idx = i[design.shape[0]:].astype(int)
-            dist_matrix = distance_matrix(Geo_space_XY[idx], Geo_space_XY[idx])
-            np.fill_diagonal(dist_matrix, np.inf)
-            dgmin = np.nanmin(dist_matrix)
-            dvmax = i[:design.shape[0]].max()
-
-            dgmin = scale_geo(dgmin)
-            dvmax = scale_var(dvmax)
-
-            # Calculate Moran's I for spatial spread
-            weights = DistanceBand.from_array(Geo_space_XY[idx], threshold=20, binary=True, silence_warnings=True)
-
-            # Ensure weights are valid
-            if np.any(np.isnan(weights.sparse.toarray())) or np.any(np.isinf(weights.sparse.toarray())):
-                continue  # Skip this iteration if weights are invalid
-
-            mi_values = []
-            for j in range(features):
-                values = Var_space_XY[idx, j]
-                if not np.any(np.isnan(values)) and not np.any(np.isinf(values)):
-                    mi = Moran(values, weights)
-                    if not np.isnan(mi.I) and not np.isinf(mi.I):
-                        mi_values.append(mi.I)
-
-            if mi_values:
-                mi = np.max(mi_values)
-            else:
-                mi = np.inf  # Assign a high value to mi if no valid Moran's I could be calculated
-
-            # Calculate the score
-            score = (W1 * dgmin) + (W2 / dvmax) + (W3 / mi)
-
-            if score > final_score:
-                final_score = score
-                final_result = idx
-    ndf = pd.DataFrame(Geo_space_XY[final_result].reshape(-1, 2), columns=[lat, lon])
+    
+    scale_geo = lambda x: (x - geo_min)/(geo_max - geo_min)*3
+    scale_var = lambda x: (x - var_min)/(var_max - var_min)*3
+    
+    # Generate all possible candidate combinations
+    candidate_sets = []
+    for i in range(len(design)):
+        candidate_sets.append(filtered_indices[i])
+    
+    # Generate combinations ensuring one candidate per design point
+    all_combinations = list(itertools.product(*candidate_sets))
+    
+    # Filter for distinct points only
+    distinct_combinations = []
+    for combo in all_combinations:
+        if len(set(combo)) == num_samples:
+            distinct_combinations.append(combo)
+    
+    # Score combinations
+    best_score = float('-inf')
+    best_combo = None
+    
+    for combo in tqdm(distinct_combinations, desc="Scoring combinations"):
+        point_indices = np.array(combo)
+        
+        # Calculate geographic spread (minimum distance between any two points)
+        geo_points = Geo_space_XY[point_indices]
+        geo_dist = distance_matrix(geo_points, geo_points)
+        np.fill_diagonal(geo_dist, np.inf)
+        min_geo_dist = np.min(geo_dist)
+        
+        # Calculate feature representation (maximum distance to design points)
+        max_feature_dist = 0
+        for i, point_idx in enumerate(point_indices):
+            # Find distance from this point to its design point
+            point_feature = Var_space_XY[point_idx]
+            dist_to_design = np.linalg.norm(point_feature - design[i])
+            if dist_to_design > max_feature_dist:
+                max_feature_dist = dist_to_design
+        
+        # Apply scaling
+        min_geo_dist_scaled = scale_geo(min_geo_dist)
+        max_feature_dist_scaled = scale_var(max_feature_dist)
+        
+        # Calculate combined score
+        score = (1 - weight) * min_geo_dist_scaled - weight * max_feature_dist_scaled
+        
+        if score > best_score:
+            best_score = score
+            best_combo = point_indices
+    
+    # Final result handling
+    if best_combo is not None:
+        final_indices = best_combo
+    else:
+        # Fallback: select first candidate for each design point
+        final_indices = [candidates[0] for candidates in candidate_sets]
+        print("\x1b[33mWarning: Using fallback candidate selection\x1b[0m")
+    
+    # Ensure we have exactly the requested number of points
+    final_indices = final_indices[:num_samples]
+    
+    # Create output with actual points from the dataset
+    result_points = Geo_space_XY[final_indices]
+    ndf = pd.DataFrame(result_points, columns=[lat, lon])
     ndf.to_csv(f"{output_name}.csv", index=None)
+    
     return ndf
-
