@@ -45,7 +45,7 @@ from flask import Flask, send_from_directory, jsonify
 from soil_stats import soil_stats_bp
 from soil_sample import soil_sample_bp
 from ndvi_timeseries import ndvi_timeseries_bp
-from ETmap import etmap_bp
+from ETrawdata import etrawdata_bp
 
 app = Flask(__name__)
 
@@ -53,7 +53,7 @@ app = Flask(__name__)
 app.register_blueprint(soil_stats_bp)
 app.register_blueprint(soil_sample_bp)
 app.register_blueprint(ndvi_timeseries_bp)
-app.register_blueprint(etmap_bp)
+app.register_blueprint(etrawdata_bp)
 
 # Global error handler
 @app.errorhandler(Exception)
