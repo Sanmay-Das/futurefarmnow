@@ -445,3 +445,118 @@ The result contains only the defined values.
   ]
 }
 ```
+
+## Get raw data for ET map algorithm
+
+Submit a request for ET map data fetching over a specified geometry and date range. The system will collect and align all required datasets (NLDAS, Landsat, PRISM) for evapotranspiration modeling.
+
+| Endpoint    | `/etmap`                   |
+|-------------|----------------------------|
+| HTTP method | POST                       |
+| Since       | 0.3                        |
+
+### Parameters
+
+| Parameter | Required? | How to use                                                    | Description                                          |
+|-----------|-----------|---------------------------------------------------------------|------------------------------------------------------|
+| date_from | Required  | JSON: "date_from": "yyyy-mm-dd"                             | Start date for data collection                       |
+| date_to   | Required  | JSON: "date_to": "yyyy-mm-dd"                               | End date for data collection                         |
+| geometry  | Required  | JSON: "geometry": {GeoJSON geometry object}                 | Area of interest geometry (Polygon or MultiPolygon) |
+
+*Note*: The system collects NLDAS hourly meteorological data, Landsat 8 imagery, PRISM daily climate data, and static layers (elevation, soil, NLCD) for the specified geometry and date range.
+
+### Examples
+#### URL
+<https://raptor.cs.ucr.edu/futurefarmnow-backend-0.3-RC1/etmap>
+
+#### POST payload
+```json
+{
+  "date_from": "2024-04-16",
+  "date_to": "2024-04-30", 
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [-117.52, 33.86],
+        [-117.20, 33.86], 
+        [-117.20, 34.05],
+        [-117.52, 34.05],
+        [-117.52, 33.86]
+      ]
+    ]
+  }
+}
+```
+#### Example with cUrl
+```
+curl -X POST "https://raptor.cs.ucr.edu/futurefarmnow-backend-0.3-RC1/v1/etmap" -H "Content-Type: application/json" -d '{"date_from": "2024-03-16", "date_to": "2024-03-30", "geometry": {"type": "Polygon", "coordinates": [[[-117.52, 33.86], [-117.20, 33.86], [-117.20, 34.05], [-117.52, 34.05], [-117.52, 33.86]]]}}'
+```
+
+#### Response
+```json
+{
+  "request_id": "0a1c6379-43ab-41ed-9d64-7c77cd6d57ab"
+}
+```
+
+## Get data fetching status
+
+Check the status of an ETMap data collection request using the request ID.
+
+| Endpoint    | `/etmap/<request_id>`                                        |
+|-------------|--------------------------------------------------------------|
+| HTTP method | GET                                                          |
+| Since       | 0.3                                                          |
+
+### Parameters
+
+| Parameter | Required? | How to use | Description                                 |
+|-----------|-----------|------------|---------------------------------------------|
+| request_id| Required  | URL        | The UUID of the ET map data fetching request|
+
+
+### Examples
+#### URL
+<https://raptor.cs.ucr.edu/futurefarmnow-backend-0.3-RC1/etmap/0a1c6379-43ab-41ed-9d64-7c77cd6d57ab>
+
+#### Response
+```json
+{
+  "created_at": "2025-08-11T08:13:06.769949",
+  "request": {
+    "date_from": "2024-04-16",
+    "date_to": "2024-04-30",
+    "geometry": {
+      "coordinates": [
+        [
+          [
+            -117.52,
+            33.86
+          ],
+          [
+            -117.2,
+            33.86
+          ],
+          [
+            -117.2,
+            34.05
+          ],
+          [
+            -117.52,
+            34.05
+          ],
+          [
+            -117.52,
+            33.86
+          ]
+        ]
+      ],
+      "type": "Polygon"
+    }
+  },
+  "request_id": "0a1c6379-43ab-41ed-9d64-7c77cd6d57ab",
+  "status": "success",
+  "updated_at": "2025-08-11T08:30:34.433866"
+}
+```
