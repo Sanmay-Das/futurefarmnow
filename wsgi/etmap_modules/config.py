@@ -78,7 +78,7 @@ class ETMapConfig:
     # Band ordering for hourly files
     BAND_ORDER = {
         'static': ['soil_awc', 'soil_fc', 'elevation', 'nlcd'],
-        'prism': ['temp_min', 'temp_max', 'temp_mean', 'precipitation', 'vpd_min', 'vpd_max'],
+        'prism': ['precipitation'],
         'landsat': ['ndvi', 'lai'],
         'nldas': ['temp', 'humidity', 'wind_speed', 'radiation']
     }
