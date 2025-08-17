@@ -2,396 +2,560 @@ import os
 import glob
 import numpy as np
 import rasterio
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 import json
+from .baitsss_algorithm import BAITSSSAlgorithm
 from .config import ETMapConfig
 from .utils import FileManager, LoggingUtils
 
 
 class ETAlgorithm:
-    """
-    Complete ET Algorithm implementation with BAITSSS model integration
-    """
-    
-    def __init__(self):
-        self.constants = {
-            'stefan_boltzmann': 5.67e-8,
-            'cp': 1013,
-            'lambda_v': 2.45e6,
-            'gamma': 0.665,
-            'albedo_default': 0.23,
-            'soil_heat_flux_ratio': 0.1
-        }
-    
+    def __init__(self, debug: bool = False):
+        self.block_size = 200
+        self.baitsss = BAITSSSAlgorithm()  # Pure physics module
+        self.debug = debug
+        
+        if self.debug:
+            print("DEBUG MODE ENABLED: Will save all intermediate enhanced files to disk")
+        else:
+            print("NORMAL MODE: Intermediate files kept in memory only")
+        
     def create_enhanced_hourly_files_with_et(self, hourly_files_dir: str, output_dir: str) -> bool:
-        LoggingUtils.print_step_header("Creating Enhanced Hourly Files with BAITSSS ET")
+        mode_str = "DEBUG" if self.debug else "OPTIMIZED"
+        print(f"Starting BAITSSS ET Processing ({mode_str} MODE)...")
+        print(f"Input: {hourly_files_dir}")
+        print(f"Output: {output_dir}")
+        
+        if not self.debug:
+            print(f"Note: Intermediate files kept in memory, only final result saved to disk")
+        else:
+            print(f"Note: All intermediate enhanced files will be saved for debugging")
         
         try:
-            # Find all hourly files
-            hourly_pattern = os.path.join(hourly_files_dir, "*.tif")
-            hourly_files = sorted(glob.glob(hourly_pattern))
+            # Get sorted hourly files
+            hourly_files = self._get_sorted_hourly_files(hourly_files_dir)
             
             if not hourly_files:
-                LoggingUtils.print_error(f"No hourly files found in {hourly_files_dir}")
+                print(f"ERROR: No hourly files found in {hourly_files_dir}")
                 return False
             
-            LoggingUtils.print_success(f"Found {len(hourly_files)} hourly files to enhance with ET")
+            print(f"Found {len(hourly_files)} hourly files to process")
+            os.makedirs(output_dir, exist_ok=True)
             
-            # Create output directory
-            FileManager.ensure_directory_exists(output_dir)
-            
-            # Process each hourly file to add ET calculations
-            processed_count = 0
-            
-            for hourly_file in hourly_files:
-                filename = os.path.basename(hourly_file)
-                print(f"Processing {filename}")
-                
-                # Extract date and hour from filename
-                date_str, hour_str = self._extract_date_hour_from_filename(filename)
-                if not date_str or hour_str is None:
-                    LoggingUtils.print_warning(f"Could not parse filename: {filename}")
-                    continue
-                
-                # Create enhanced hourly file with ET calculations
-                success = self._create_enhanced_hourly_file_with_baitsss(hourly_file, output_dir)
-                
+            # Process based on debug mode
+            if self.debug:
+                processed_count = self._process_hourly_sequence_with_disk_save(hourly_files, output_dir)
+                success = processed_count > 0
                 if success:
-                    processed_count += 1
-                    LoggingUtils.print_success(f"Enhanced hourly file: {filename}")
-                else:
-                    LoggingUtils.print_error(f"Failed to enhance: {filename}")
+                    self._create_comprehensive_et_summary(output_dir)
+            else:
+                enhanced_data_list = self._process_hourly_sequence_in_memory(hourly_files)
+                success = len(enhanced_data_list) > 0
+                if success:
+                    success = self._create_final_result_from_memory(enhanced_data_list, output_dir)
             
-            LoggingUtils.print_success(f"Enhanced {processed_count}/{len(hourly_files)} hourly files")
-            LoggingUtils.print_success(f"Location: {output_dir}")
-            LoggingUtils.print_success("Each file contains ALL datasets + BAITSSS ET calculations per pixel")
-            
-            # Create summary ET maps
-            self._create_summary_et_maps(output_dir)
-            
-            return processed_count > 0
+            if success:
+                # Create JSON summary
+                files_processed = processed_count if self.debug else len(enhanced_data_list)
+                self._create_json_summary(output_dir, files_processed)
+                print(f"✓ Final ET result saved to: {output_dir}/ET_final_result.tif")
+                
+                if self.debug:
+                    print(f"✓ All intermediate enhanced files saved in: {output_dir}/")
+                
+                return True
+            else:
+                print("ERROR: Processing failed")
+                return False
                 
         except Exception as e:
-            LoggingUtils.print_error(f"Enhanced hourly files creation failed: {e}")
+            print(f"ERROR: ET processing failed: {e}")
             import traceback
             traceback.print_exc()
             return False
-    
-    def _create_enhanced_hourly_file_with_baitsss(self, input_hourly_file: str, output_dir: str) -> bool:
+
+    def _get_sorted_hourly_files(self, hourly_files_dir: str) -> List[str]:
+        """Get hourly files sorted chronologically"""
+        pattern = os.path.join(hourly_files_dir, "*.tif")
+        files = glob.glob(pattern)
+        return sorted(files, key=lambda x: os.path.basename(x))
+
+    def _process_hourly_sequence_with_disk_save(self, hourly_files: List[str], output_dir: str) -> int:
+        previous_state = None
+        processed_count = 0
+        
+        print("🐛 DEBUG MODE: Saving each enhanced file to disk...")
+        
+        for i, hourly_file in enumerate(hourly_files):
+            filename = os.path.basename(hourly_file)
+            print(f"Processing hour {i+1}/{len(hourly_files)}: {filename}")
+            
+            # Process this hour with state from previous hour
+            current_state = self._process_single_hourly_file_with_disk_save(
+                hourly_file, output_dir, previous_state
+            )
+            
+            if current_state is not None:
+                processed_count += 1
+                previous_state = current_state  # Temporal continuity!
+                print(f"✓ Completed: {filename} (saved to disk)")
+            else:
+                print(f"✗ Failed: {filename}")
+        
+        print(f"DEBUG MODE: Processed {processed_count} files, all saved to disk")
+        return processed_count
+
+    def _process_single_hourly_file_with_disk_save(self, hourly_file: str, output_dir: str, 
+                                                  previous_state: Optional[Dict]) -> Optional[Dict]:
         try:
-            filename = os.path.basename(input_hourly_file)
+            filename = os.path.basename(hourly_file)
             output_filename = filename.replace('.tif', '_enhanced.tif')
             output_path = os.path.join(output_dir, output_filename)
             
-            with rasterio.open(input_hourly_file) as src:
-                # Read all input bands
-                input_data = src.read()  # Shape: (bands, height, width)
+            with rasterio.open(hourly_file) as src:
+                input_data = src.read()
                 height, width = input_data.shape[1], input_data.shape[2]
+                profile = src.profile
                 
-                # Load band metadata
-                band_names = self._load_band_metadata(input_hourly_file)
+                print(f"Processing {height}x{width} pixels in blocks...")
                 
-                # Create variables dictionary for ET calculation
-                variables = self._create_variables_dictionary(input_data, band_names)
-                
-                # Calculate ET using BAITSSS algorithm
-                print(f"  Running BAITSSS ET calculation...")
-                baitsss_results = self._run_baitsss_et_calculation(variables)
-                
-                if baitsss_results is None:
-                    LoggingUtils.print_error(f"BAITSSS calculation failed for {filename}")
-                    return False
-                
-                # Create enhanced multi-band array
-                total_bands = input_data.shape[0] + 5  # Original + 5 BAITSSS outputs
-                enhanced_data = np.full((total_bands, height, width), -9999.0, dtype=np.float32)
-                
-                # Copy original data
-                enhanced_data[:input_data.shape[0]] = input_data.astype(np.float32)
-                
-                # Add BAITSSS results
-                if baitsss_results.shape[0] == 5:
-                    enhanced_data[input_data.shape[0]:input_data.shape[0]+5] = baitsss_results
+                # Initialize or use previous state
+                if previous_state is None:
+                    print("Initializing first hour state...")
+                    current_state = self._initialize_et_state(height, width)
                 else:
-                    # Fallback: single ET value
-                    enhanced_data[input_data.shape[0]] = baitsss_results[0] if baitsss_results.ndim > 0 else baitsss_results
-                    enhanced_data[input_data.shape[0]+1:input_data.shape[0]+5] = 0.0
+                    current_state = {k: v.copy() for k, v in previous_state.items()}
+                    print("Using previous hour state...")
                 
-                # Create enhanced band names
-                enhanced_band_names = band_names + [
-                    'baitsss_et_cumulative',
-                    'baitsss_precipitation_sum', 
-                    'baitsss_irrigation_sum',
-                    'baitsss_soil_moisture_surface',
-                    'baitsss_soil_moisture_root'
-                ]
+                # Extract variables from input bands
+                variables = self._extract_variables_from_bands(input_data)
                 
-                # Write enhanced multi-band GeoTIFF
-                profile = src.profile.copy()
-                profile.update({
-                    'dtype': 'float32',
-                    'count': total_bands,
-                    'nodata': -9999.0,
-                    'compress': 'lzw',
-                    'tiled': True,
-                    'blockxsize': 256,
-                    'blockysize': 256
-                })
+                # Process using block-wise BAITSSS
+                updated_state = self._run_blockwise_baitsss(
+                    variables, current_state, height, width
+                )
                 
-                with rasterio.open(output_path, 'w', **profile) as dst:
-                    dst.write(enhanced_data)
-                    dst.descriptions = tuple(enhanced_band_names)
+                if updated_state is None:
+                    return None
                 
-                # Save enhanced band metadata
-                self._save_enhanced_metadata(output_dir, output_filename, enhanced_band_names, filename)
+                # Create and save enhanced output to disk
+                enhanced_data = self._create_enhanced_output(input_data, updated_state)
+                self._save_enhanced_file(enhanced_data, output_path, profile)
                 
-                print(f"  ✓ Created enhanced file: {output_filename} ({total_bands} bands)")
-                print(f"  ✓ Each pixel contains: static + prism + landsat + nldas + BAITSSS ET")
-                
-                return True
+                print(f"🐛 DEBUG: Saved {output_filename} ({enhanced_data.shape[0]} bands)")
+                return updated_state
                 
         except Exception as e:
-            LoggingUtils.print_error(f"Error creating enhanced hourly file: {e}")
-            return False
-    
-    def _run_baitsss_et_calculation(self, variables: Dict[str, np.ndarray]) -> Optional[np.ndarray]:
-        """
-        Run complete BAITSSS ET calculation for entire raster
-        Returns all 5 BAITSSS outputs per pixel
-        """
-        try:
-            from .baitsss_algorithm import BAITSSSAlgorithm
-            
-            # Get dimensions
-            height, width = next(iter(variables.values())).shape
-            
-            # Initialize BAITSSS algorithm
-            baitsss = BAITSSSAlgorithm()
-            
-            # Initialize output array for all 5 BAITSSS outputs
-            baitsss_results = np.full((5, height, width), -9999.0, dtype=np.float32)
-            
-            print(f"    Processing {height}x{width} pixels with BAITSSS algorithm...")
-            
-            # Process each pixel
-            for i in range(height):
-                if i % max(1, height // 10) == 0:  # Progress indicator
-                    print(f"    Progress: {i}/{height} rows ({100*i//height}%)")
-                
-                for j in range(width):
-                    try:
-                        # Extract and validate pixel values
-                        pixel_values = self._extract_pixel_values(variables, i, j, height, width)
-                        
-                        # Check for valid data
-                        if not self._validate_pixel_data(pixel_values):
-                            continue
-                        
-                        # Apply defaults for missing data
-                        pixel_values = self._apply_default_values(pixel_values)
-                        
-                        # Call BAITSSS algorithm
-                        result = baitsss.iterative_calculation(
-                            pixel_values['ndvi'], pixel_values['lai'], 
-                            pixel_values['soil_awc'], pixel_values['soil_fc'], 
-                            pixel_values['nlcd_u'], pixel_values['precip_prism'], 
-                            pixel_values['elev_array'], pixel_values['tair_oc'], 
-                            pixel_values['s_hum'], pixel_values['uz_in'], 
-                            pixel_values['in_short'], pixel_values['et_sum'], 
-                            pixel_values['precip_prism_sum'], pixel_values['irri_sum'], 
-                            pixel_values['soilm_sur_pre'], pixel_values['soilm_root_pre']
-                        )
-                        
-                        # Store all 5 BAITSSS outputs
-                        baitsss_results[:, i, j] = result
-                        
-                    except Exception as e:
-                        # Keep as nodata for failed pixels
-                        continue
-            
-            print(f"    ✓ BAITSSS calculation completed")
-            return baitsss_results
-            
-        except Exception as e:
-            LoggingUtils.print_error(f"Error in BAITSSS ET calculation: {e}")
+            print(f"Error processing {hourly_file}: {e}")
             return None
-    
-    def _extract_pixel_values(self, variables: Dict[str, np.ndarray], i: int, j: int, height: int, width: int) -> Dict:
-        """Extract all variable values for a single pixel"""
-        return {
-            'soil_awc': variables.get('static_soil_awc', np.zeros((height, width)))[i, j],
-            'soil_fc': variables.get('static_soil_fc', np.zeros((height, width)))[i, j],
-            'nlcd_u': variables.get('static_nlcd', np.zeros((height, width)))[i, j],
-            'elev_array': variables.get('static_elevation', np.zeros((height, width)))[i, j],
-            'precip_prism': variables.get('prism_precipitation', np.zeros((height, width)))[i, j],
-            'tair_oc': variables.get('nldas_temp', np.zeros((height, width)))[i, j],
-            's_hum': variables.get('nldas_humidity', np.zeros((height, width)))[i, j],
-            'uz_in': variables.get('nldas_wind_speed', np.zeros((height, width)))[i, j],
-            'in_short': variables.get('nldas_radiation', np.zeros((height, width)))[i, j],
-            'ndvi': variables.get('landsat_ndvi', np.zeros((height, width)))[i, j],
-            'lai': variables.get('landsat_lai', np.zeros((height, width)))[i, j],
-            'et_sum': 0.0,
-            'precip_prism_sum': 0.0,
-            'irri_sum': 0.0,
-            'soilm_sur_pre': 0.2,
-            'soilm_root_pre': 0.3
-        }
-    
-    def _validate_pixel_data(self, pixel_values: Dict) -> bool:
-        """Check if pixel data is valid for processing"""
-        tair_oc = pixel_values['tair_oc']
-        ndvi = pixel_values['ndvi']
+
+    def _save_enhanced_file(self, enhanced_data: np.ndarray, output_path: str, profile: dict):
+        """Save enhanced raster file to disk (DEBUG MODE)"""
+        profile.update({
+            'count': enhanced_data.shape[0],
+            'dtype': 'float32',
+            'nodata': -9999,
+            'compress': 'lzw'
+        })
         
-        return not (np.isnan(tair_oc) or tair_oc < -50 or tair_oc > 60 or
-                   np.isnan(ndvi) or ndvi < -1 or ndvi > 1)
-    
-    def _apply_default_values(self, pixel_values: Dict) -> Dict:
-        """Apply default values for invalid/missing data"""
-        defaults = {
-            'soil_awc': (0.1, lambda x: x <= 0 or np.isnan(x)),
-            'soil_fc': (0.3, lambda x: x <= 0 or np.isnan(x)),
-            'nlcd_u': (42.0, lambda x: x <= 0 or np.isnan(x)),
-            'elev_array': (100.0, lambda x: x <= 0 or np.isnan(x)),
-            'precip_prism': (0.0, lambda x: np.isnan(x)),
-            's_hum': (0.6, lambda x: x <= 0 or x > 1 or np.isnan(x)),
-            'uz_in': (2.0, lambda x: x <= 0 or np.isnan(x)),
-            'in_short': (300.0, lambda x: x <= 0 or np.isnan(x)),
-            'lai': (2.0, lambda x: x <= 0 or x > 10 or np.isnan(x))
-        }
+        with rasterio.open(output_path, 'w', **profile) as dst:
+            dst.write(enhanced_data)
+
+    def _process_hourly_sequence_in_memory(self, hourly_files: List[str]) -> List[Dict]:
+        previous_state = None
+        enhanced_data_list = []
         
-        for key, (default_val, condition) in defaults.items():
-            if condition(pixel_values[key]):
-                pixel_values[key] = default_val
+        print("🚀 NORMAL MODE: Processing files in memory...")
         
-        return pixel_values
-    
-    def _load_band_metadata(self, hourly_file: str) -> List[str]:
-        """Load band metadata from JSON file or create fallback"""
-        metadata_file = hourly_file.replace('.tif', '_bands.json')
-        if os.path.exists(metadata_file):
-            with open(metadata_file, 'r') as f:
-                band_info = json.load(f)
-            return [band['name'] for band in band_info['bands']]
-        else:
-            # Fallback band order
-            band_names = []
-            for category in ['static', 'prism', 'landsat', 'nldas']:
-                for var in ETMapConfig.BAND_ORDER[category]:
-                    band_names.append(f"{category}_{var}")
-            return band_names
-    
-    def _create_variables_dictionary(self, input_data: np.ndarray, band_names: List[str]) -> Dict[str, np.ndarray]:
-        """Create variables dictionary from input data and band names"""
-        variables = {}
-        for i, name in enumerate(band_names):
-            if i < input_data.shape[0]:
-                variables[name] = input_data[i]
-        return variables
-    
-    def _save_enhanced_metadata(self, output_dir: str, output_filename: str, 
-                              enhanced_band_names: List[str], original_filename: str):
-        """Save enhanced band metadata to JSON file"""
-        enhanced_metadata_path = os.path.join(output_dir, output_filename.replace('.tif', '_bands.json'))
-        enhanced_band_metadata = {
-            'date': original_filename.split('_')[0],
-            'hour': int(original_filename.split('_')[1].split('.')[0]),
-            'bands': [{'index': i+1, 'name': name} for i, name in enumerate(enhanced_band_names)],
-            'total_bands': len(enhanced_band_names),
-            'description': 'Enhanced hourly file with ALL datasets + BAITSSS ET calculations per pixel'
-        }
+        for i, hourly_file in enumerate(hourly_files):
+            filename = os.path.basename(hourly_file)
+            print(f"Processing hour {i+1}/{len(hourly_files)}: {filename}")
+            
+            # Process this hour with state from previous hour
+            result = self._process_single_hourly_file_in_memory(
+                hourly_file, previous_state, filename
+            )
+            
+            if result is not None:
+                enhanced_data, current_state = result
+                enhanced_data_list.append(enhanced_data)
+                previous_state = current_state  # Temporal continuity!
+                print(f"✓ Completed: {filename} (kept in memory)")
+            else:
+                print(f"✗ Failed: {filename}")
         
-        FileManager.save_json(enhanced_band_metadata, enhanced_metadata_path)
-    
-    def _create_summary_et_maps(self, output_dir: str):
-        """Create summary ET maps from enhanced hourly files"""
+        print(f"NORMAL MODE: Processed {len(enhanced_data_list)} files in memory")
+        return enhanced_data_list
+
+    def _process_single_hourly_file_in_memory(self, hourly_file: str, 
+                                            previous_state: Optional[Dict], 
+                                            filename: str) -> Optional[Tuple[Dict, Dict]]:
         try:
-            LoggingUtils.print_step_header("Creating Summary ET Maps")
+            with rasterio.open(hourly_file) as src:
+                input_data = src.read()
+                height, width = input_data.shape[1], input_data.shape[2]
+                profile = src.profile.copy()
+                
+                print(f"Processing {height}x{width} pixels in blocks...")
+                
+                # Initialize or use previous state
+                if previous_state is None:
+                    print("Initializing first hour state...")
+                    current_state = self._initialize_et_state(height, width)
+                else:
+                    current_state = {k: v.copy() for k, v in previous_state.items()}
+                    print("Using previous hour state...")
+                
+                # Extract variables from input bands
+                variables = self._extract_variables_from_bands(input_data)
+                
+                # Process using block-wise BAITSSS
+                updated_state = self._run_blockwise_baitsss(
+                    variables, current_state, height, width
+                )
+                
+                if updated_state is None:
+                    return None
+                
+                # Create enhanced output data (but don't save to disk)
+                enhanced_data_array = self._create_enhanced_output(input_data, updated_state)
+                
+                # Store enhanced data in memory with metadata
+                enhanced_data_dict = {
+                    'filename': filename,
+                    'data': enhanced_data_array,
+                    'profile': profile,
+                    'timestamp': datetime.now().isoformat(),
+                    'shape': enhanced_data_array.shape,
+                    'bands': enhanced_data_array.shape[0]
+                }
+                
+                print(f"Processed: {filename} ({enhanced_data_array.shape[0]} bands) - stored in memory")
+                return enhanced_data_dict, updated_state
+                
+        except Exception as e:
+            print(f"Error processing {hourly_file}: {e}")
+            return None
+
+    def _create_final_result_from_memory(self, enhanced_data_list: List[Dict], output_dir: str) -> bool:
+        try:
+            print("Creating final ET result from in-memory data...")
             
-            # Find enhanced files
-            enhanced_pattern = os.path.join(output_dir, "*_enhanced.tif")
-            enhanced_files = sorted(glob.glob(enhanced_pattern))
+            if not enhanced_data_list:
+                print("ERROR: No enhanced data available")
+                return False
             
+            # Group by day and calculate daily summaries in memory
+            daily_summaries = self._calculate_daily_summaries_from_memory(enhanced_data_list)
+            
+            if not daily_summaries:
+                print("ERROR: No daily summaries calculated")
+                return False
+            
+            # Calculate final mean ET over the period
+            final_et_data = self._calculate_final_mean_et(daily_summaries)
+            
+            # Save ONLY the final result to disk
+            final_et_path = os.path.join(output_dir, "ET_final_result.tif")
+            template_profile = enhanced_data_list[0]['profile']
+            
+            self._save_final_result_to_disk(final_et_data, final_et_path, template_profile)
+            
+            # Create visualization if possible
+            try:
+                self._create_et_visualization(final_et_data, output_dir)
+            except ImportError:
+                print("Matplotlib not available - skipping PNG creation")
+            
+            print(f"✓ Final ET result saved: {final_et_path}")
+            return True
+            
+        except Exception as e:
+            print(f"ERROR: Failed to create final result: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def _calculate_daily_summaries_from_memory(self, enhanced_data_list: List[Dict]) -> Dict[str, np.ndarray]:
+        """Calculate daily ET summaries from in-memory enhanced data"""
+        try:
+            print("Calculating daily summaries from memory...")
+            
+            # Group files by day
+            daily_groups = {}
+            for enhanced_data in enhanced_data_list:
+                filename = enhanced_data['filename']
+                date_part = filename.split('_')[0]  # Extract YYYY-MM-DD
+                if date_part not in daily_groups:
+                    daily_groups[date_part] = []
+                daily_groups[date_part].append(enhanced_data)
+            
+            daily_summaries = {}
+            
+            for date_str, day_data_list in daily_groups.items():
+                print(f"Processing day: {date_str} ({len(day_data_list)} hours)")
+                
+                # Extract ET cumulative data from each hour
+                et_arrays = []
+                for enhanced_data in day_data_list:
+                    data_array = enhanced_data['data']
+                    # ET cumulative is first BAITSSS band (after original bands)
+                    original_bands = data_array.shape[0] - 5
+                    et_cumulative = data_array[original_bands]  # 0-indexed
+                    et_arrays.append(et_cumulative)
+                
+                # Use last hour's cumulative as daily total
+                et_stack = np.stack(et_arrays, axis=0)
+                daily_et = et_stack[-1]  # Last hour has the daily cumulative
+                daily_summaries[date_str] = daily_et
+                
+                print(f"✓ Daily summary for {date_str}: {np.mean(daily_et[daily_et > 0]):.3f} mm/day average")
+            
+            return daily_summaries
+            
+        except Exception as e:
+            print(f"ERROR: Failed to calculate daily summaries: {e}")
+            return {}
+
+    def _calculate_final_mean_et(self, daily_summaries: Dict[str, np.ndarray]) -> np.ndarray:
+        """Calculate final mean ET from daily summaries"""
+        try:
+            print("Calculating final mean ET over period...")
+            
+            daily_arrays = list(daily_summaries.values())
+            daily_stack = np.stack(daily_arrays, axis=0)
+            
+            # Calculate mean ET over period
+            valid_mask = daily_stack != -9999
+            mean_et = np.full(daily_stack.shape[1:], -9999.0, dtype=np.float32)
+            
+            # Calculate mean only where we have valid data
+            for i in range(daily_stack.shape[1]):
+                for j in range(daily_stack.shape[2]):
+                    pixel_values = daily_stack[:, i, j]
+                    valid_values = pixel_values[valid_mask[:, i, j]]
+                    if len(valid_values) > 0:
+                        mean_et[i, j] = np.mean(valid_values)
+            
+            # Calculate statistics
+            valid_data = mean_et[mean_et != -9999]
+            if len(valid_data) > 0:
+                print(f"Final ET Statistics:")
+                print(f"  Days processed: {len(daily_summaries)}")
+                print(f"  Valid pixels: {len(valid_data):,}")
+                print(f"  Mean ET: {np.mean(valid_data):.3f} mm/day")
+                print(f"  Range: {np.min(valid_data):.3f} - {np.max(valid_data):.3f} mm/day")
+            
+            return mean_et
+            
+        except Exception as e:
+            print(f"ERROR: Failed to calculate final mean ET: {e}")
+            return np.array([])
+
+    def _save_final_result_to_disk(self, et_data: np.ndarray, output_path: str, template_profile: dict):
+        """Save ONLY the final ET result to disk"""
+        try:
+            profile = template_profile.copy()
+            profile.update({
+                'count': 1,
+                'dtype': 'float32',
+                'nodata': -9999,
+                'compress': 'lzw'
+            })
+            
+            with rasterio.open(output_path, 'w', **profile) as dst:
+                dst.write(et_data, 1)
+                dst.set_band_description(1, "BAITSSS Mean ET over processing period")
+            
+            print(f"✓ Saved final result: {output_path}")
+            
+        except Exception as e:
+            print(f"ERROR: Failed to save final result: {e}")
+            raise
+
+    def _initialize_et_state(self, height: int, width: int) -> Dict[str, np.ndarray]:
+        """Initialize ET state variables for first hour"""
+        return {
+            'et_cumulative': np.zeros((height, width), dtype=np.float32),
+            'precip_cumulative': np.zeros((height, width), dtype=np.float32),
+            'irrigation_cumulative': np.zeros((height, width), dtype=np.float32),
+            'soil_moisture_surface': np.full((height, width), 0.2, dtype=np.float32),
+            'soil_moisture_root': np.full((height, width), 0.3, dtype=np.float32)
+        }
+
+    def _extract_variables_from_bands(self, input_data: np.ndarray) -> Dict[str, np.ndarray]:
+        """Extract variables from input raster bands"""
+        band_mapping = {
+            0: 'soil_awc', 1: 'soil_fc', 2: 'elevation', 3: 'nlcd', 4: 'precipitation',
+            5: 'ndvi', 6: 'lai', 7: 'temperature', 8: 'humidity', 9: 'wind_speed', 10: 'radiation'
+        }
+        
+        variables = {}
+        for band_idx, var_name in band_mapping.items():
+            if band_idx < input_data.shape[0]:
+                variables[var_name] = input_data[band_idx]
+            else:
+                variables[var_name] = self._get_default_array(var_name, input_data.shape[1], input_data.shape[2])
+        
+        return variables
+
+    def _get_default_array(self, var_name: str, height: int, width: int) -> np.ndarray:
+        """Get default values for missing variables"""
+        defaults = {
+            'soil_awc': 0.15, 'soil_fc': 35.0, 'elevation': 200.0, 'nlcd': 42.0,
+            'precipitation': 0.0, 'ndvi': 0.4, 'lai': 3.0, 'temperature': 15.0,
+            'humidity': 0.65, 'wind_speed': 3.0, 'radiation': 400.0
+        }
+        return np.full((height, width), defaults.get(var_name, 0.0), dtype=np.float32)
+
+    def _run_blockwise_baitsss(self, variables: Dict[str, np.ndarray], 
+                              state: Dict[str, np.ndarray], 
+                              height: int, width: int) -> Optional[Dict[str, np.ndarray]]:
+        """Run BAITSSS algorithm using block-wise processing"""
+        try:
+            et_hourly = np.zeros((height, width), dtype=np.float32)
+            new_soil_surface = state['soil_moisture_surface'].copy()
+            new_soil_root = state['soil_moisture_root'].copy()
+            precipitation_hour = variables.get('precipitation', np.zeros((height, width)))
+            irrigation_hour = np.zeros((height, width), dtype=np.float32)
+            
+            blocks_processed = 0
+            total_blocks = ((height + self.block_size - 1) // self.block_size) * \
+                          ((width + self.block_size - 1) // self.block_size)
+            
+            for b_i in range(0, height, self.block_size):
+                for b_j in range(0, width, self.block_size):
+                    block_height = min(self.block_size, height - b_i)
+                    block_width = min(self.block_size, width - b_j)
+                    
+                    block_vars = self._extract_block_data(variables, state, b_i, b_j, block_height, block_width)
+                    block_results = self.baitsss.process_block(block_vars, block_height, block_width)
+                    
+                    if block_results is not None:
+                        et_hourly[b_i:b_i+block_height, b_j:b_j+block_width] = block_results['et_hour']
+                        new_soil_surface[b_i:b_i+block_height, b_j:b_j+block_width] = block_results['soil_surface']
+                        new_soil_root[b_i:b_i+block_height, b_j:b_j+block_width] = block_results['soil_root']
+                        irrigation_hour[b_i:b_i+block_height, b_j:b_j+block_width] = block_results['irrigation']
+                    else:
+                        et_hourly[b_i:b_i+block_height, b_j:b_j+block_width] = 2.0
+                    
+                    blocks_processed += 1
+                    if blocks_processed % 10 == 0 or blocks_processed == total_blocks:
+                        progress = 100 * blocks_processed / total_blocks
+                        print(f"Progress: {progress:.1f}% ({blocks_processed}/{total_blocks} blocks)")
+            
+            return {
+                'et_cumulative': state['et_cumulative'] + et_hourly,
+                'precip_cumulative': state['precip_cumulative'] + precipitation_hour,
+                'irrigation_cumulative': state['irrigation_cumulative'] + irrigation_hour,
+                'soil_moisture_surface': new_soil_surface,
+                'soil_moisture_root': new_soil_root
+            }
+            
+        except Exception as e:
+            print(f"Block-wise processing failed: {e}")
+            return None
+
+    def _extract_block_data(self, variables: Dict[str, np.ndarray], state: Dict[str, np.ndarray],
+                           b_i: int, b_j: int, block_height: int, block_width: int) -> Dict[str, np.ndarray]:
+        """Extract block data for BAITSSS processing"""
+        block_vars = {}
+        for var_name, var_data in variables.items():
+            block_vars[var_name] = var_data[b_i:b_i+block_height, b_j:b_j+block_width]
+        
+        block_vars['soil_moisture_surface_prev'] = state['soil_moisture_surface'][b_i:b_i+block_height, b_j:b_j+block_width]
+        block_vars['soil_moisture_root_prev'] = state['soil_moisture_root'][b_i:b_i+block_height, b_j:b_j+block_width]
+        return block_vars
+
+    def _create_enhanced_output(self, input_data: np.ndarray, state: Dict[str, np.ndarray]) -> np.ndarray:
+        """Create enhanced output with original bands + BAITSSS results"""
+        enhanced_bands = [
+            input_data,
+            state['et_cumulative'][np.newaxis, :, :],
+            state['precip_cumulative'][np.newaxis, :, :],
+            state['irrigation_cumulative'][np.newaxis, :, :],
+            state['soil_moisture_surface'][np.newaxis, :, :],
+            state['soil_moisture_root'][np.newaxis, :, :]
+        ]
+        return np.concatenate(enhanced_bands, axis=0)
+
+    def _create_comprehensive_et_summary(self, output_dir: str):
+        """DEBUG MODE: Create comprehensive ET summary from saved files"""
+        try:
+            print("Creating comprehensive ET summary from saved files...")
+            
+            enhanced_files = sorted(glob.glob(os.path.join(output_dir, "*_enhanced.tif")))
             if not enhanced_files:
-                LoggingUtils.print_warning("No enhanced files found for summary")
+                print("No enhanced files found for summary")
                 return
             
-            # Group by date
-            daily_files = {}
-            for file_path in enhanced_files:
-                filename = os.path.basename(file_path)
-                date_str = filename.split('_')[0]
-                if date_str not in daily_files:
-                    daily_files[date_str] = []
-                daily_files[date_str].append(file_path)
+            # Group files by day
+            daily_groups = self._group_files_by_day(enhanced_files)
             
             # Create daily summaries
             daily_et_files = []
-            for date_str, files in daily_files.items():
+            for date_str, files in daily_groups.items():
                 daily_et_path = self._create_daily_et_summary(files, output_dir, date_str)
                 if daily_et_path:
                     daily_et_files.append(daily_et_path)
             
             # Create final period summary
             if daily_et_files:
-                self._create_final_et_summary(daily_et_files, output_dir)
+                self._create_final_et_summary_from_files(daily_et_files, output_dir)
+            
+            print("Comprehensive ET summary completed!")
             
         except Exception as e:
-            LoggingUtils.print_error(f"Error creating summary ET maps: {e}")
-    
+            print(f"Error creating ET summary: {e}")
+
+    def _group_files_by_day(self, enhanced_files: List[str]) -> Dict[str, List[str]]:
+        """Group enhanced files by day"""
+        daily_groups = {}
+        for file_path in enhanced_files:
+            filename = os.path.basename(file_path)
+            date_part = filename.split('_')[0]
+            if date_part not in daily_groups:
+                daily_groups[date_part] = []
+            daily_groups[date_part].append(file_path)
+        return daily_groups
+
     def _create_daily_et_summary(self, hourly_files: List[str], output_dir: str, date_str: str) -> Optional[str]:
         """Create daily ET summary from hourly files"""
         try:
-            # Read ET band from all hourly files for this date
             et_arrays = []
             template_file = hourly_files[0]
             
             for file_path in hourly_files:
                 with rasterio.open(file_path) as src:
-                    # BAITSSS ET is typically the first ET band after original data
-                    et_band_index = src.count - 5  # ET is first of 5 BAITSSS outputs
-                    et_data = src.read(et_band_index + 1)  # 1-indexed
+                    original_bands = src.count - 5
+                    et_data = src.read(original_bands + 1)
                     et_arrays.append(et_data)
             
-            # Calculate daily sum
             et_stack = np.stack(et_arrays, axis=0)
-            valid_mask = et_stack != -9999
-            daily_et = np.full(et_stack.shape[1:], -9999.0, dtype=np.float32)
+            daily_et = et_stack[-1]
             
-            for i in range(et_stack.shape[1]):
-                for j in range(et_stack.shape[2]):
-                    pixel_values = et_stack[:, i, j]
-                    valid_values = pixel_values[valid_mask[:, i, j]]
-                    if len(valid_values) > 0:
-                        daily_et[i, j] = np.sum(valid_values)
-            
-            # Save daily ET
             daily_et_path = os.path.join(output_dir, f"ET_daily_{date_str}.tif")
             with rasterio.open(template_file) as template:
                 profile = template.profile.copy()
-                profile.update({'count': 1, 'dtype': 'float32'})
+                profile.update({'count': 1, 'dtype': 'float32', 'nodata': -9999})
                 
                 with rasterio.open(daily_et_path, 'w', **profile) as dst:
                     dst.write(daily_et, 1)
                     dst.set_band_description(1, f"Daily ET Sum - {date_str}")
             
-            # Create PNG
-            png_path = os.path.join(output_dir, f"ET_daily_{date_str}.png")
-            self._create_et_visualization(daily_et, png_path, f"Daily ET - {date_str}")
-            
-            LoggingUtils.print_success(f"Created daily ET summary: {date_str}")
+            print(f"Created daily summary: {date_str}")
             return daily_et_path
             
         except Exception as e:
-            LoggingUtils.print_error(f"Error creating daily summary for {date_str}: {e}")
+            print(f"Error creating daily summary for {date_str}: {e}")
             return None
-    
-    def _create_final_et_summary(self, daily_et_files: List[str], output_dir: str):
-        """Create final period ET summary"""
+
+    def _create_final_et_summary_from_files(self, daily_et_files: List[str], output_dir: str):
+        """Create final period ET summary from daily files"""
         try:
-            LoggingUtils.print_step_header("Creating Final ET Summary")
+            print("Creating final ET summary...")
             
-            # Read all daily ET files
             daily_arrays = []
             template_file = daily_et_files[0]
             
@@ -400,7 +564,6 @@ class ETAlgorithm:
                     daily_et = src.read(1)
                     daily_arrays.append(daily_et)
             
-            # Calculate mean ET over period
             daily_stack = np.stack(daily_arrays, axis=0)
             valid_mask = daily_stack != -9999
             mean_et = np.full(daily_stack.shape[1:], -9999.0, dtype=np.float32)
@@ -412,135 +575,115 @@ class ETAlgorithm:
                     if len(valid_values) > 0:
                         mean_et[i, j] = np.mean(valid_values)
             
-            # Save final ET TIF
             final_et_tif = os.path.join(output_dir, "ET_final_result.tif")
             with rasterio.open(template_file) as template:
                 profile = template.profile.copy()
+                profile.update({'count': 1, 'dtype': 'float32', 'nodata': -9999})
                 
                 with rasterio.open(final_et_tif, 'w', **profile) as dst:
                     dst.write(mean_et, 1)
                     dst.set_band_description(1, f"Mean ET over {len(daily_et_files)} days")
             
-            # Create final PNG
-            final_et_png = os.path.join(output_dir, "ET_final_result.png")
-            self._create_et_visualization(mean_et, final_et_png, f"Mean ET over {len(daily_et_files)} days")
+            try:
+                self._create_et_visualization(mean_et, output_dir)
+            except ImportError:
+                print("Matplotlib not available - skipping PNG creation")
             
-            LoggingUtils.print_success(f"Final ET results created:")
-            LoggingUtils.print_success(f"  TIF: {final_et_tif}")
-            LoggingUtils.print_success(f"  PNG: {final_et_png}")
+            print(f"Final ET TIF created: {final_et_tif}")
             
         except Exception as e:
-            LoggingUtils.print_error(f"Error creating final ET summary: {e}")
-    
-    def _create_et_visualization(self, et_data: np.ndarray, png_path: str, title: str):
+            print(f"Error creating final summary: {e}")
+
+    def _create_et_visualization(self, et_data: np.ndarray, output_dir: str):
         """Create PNG visualization of ET map"""
         try:
             import matplotlib.pyplot as plt
             
-            # Mask nodata values
             et_masked = np.ma.masked_where(et_data == -9999, et_data)
             
-            # Create figure
             plt.figure(figsize=(12, 8))
-            
-            # Create colormap
             cmap = plt.cm.viridis
             cmap.set_bad('white', 1.0)
             
-            # Plot ET map
             im = plt.imshow(et_masked, cmap=cmap, interpolation='nearest')
             plt.colorbar(im, label='ET (mm/day)', shrink=0.8)
-            plt.title(title, fontsize=14, fontweight='bold')
+            plt.title('BAITSSS Evapotranspiration Map', fontsize=14, fontweight='bold')
             plt.axis('off')
             
-            # Save PNG
+            png_path = os.path.join(output_dir, "ET_final_result.png")
             plt.savefig(png_path, dpi=300, bbox_inches='tight', facecolor='white')
             plt.close()
             
-            LoggingUtils.print_success(f"Created ET visualization: {png_path}")
+            print(f"✓ ET visualization created: {png_path}")
             
-        except ImportError:
-            LoggingUtils.print_warning("Matplotlib not available - skipping PNG creation")
         except Exception as e:
-            LoggingUtils.print_error(f"Error creating PNG: {e}")
-    
-    def _extract_date_hour_from_filename(self, filename: str) -> tuple:
-        """Extract date and hour from hourly filename"""
-        try:
-            # Expected format: 2024-03-16_00.tif
-            base_name = os.path.splitext(filename)[0]
-            date_str, hour_str = base_name.split('_')
-            hour = int(hour_str)
-            return date_str, hour
-        except:
-            return None, None
+            print(f"Could not create PNG: {e}")
 
-
-class ETResultsManager:
-    """
-    Manages ET results and creates summary reports
-    """
-    
-    @staticmethod
-    def create_comprehensive_et_summary(output_dir: str, request_data: Dict):
-        """Create comprehensive summary report of ET results"""
+    def _create_json_summary(self, output_dir: str, processed_files_count: int):
+        """Create comprehensive JSON summary"""
         try:
-            # Find final results
             final_tif = os.path.join(output_dir, "ET_final_result.tif")
-            final_png = os.path.join(output_dir, "ET_final_result.png")
             
-            if not os.path.exists(final_tif):
-                LoggingUtils.print_warning("Final ET result not found")
-                return
-            
-            # Create comprehensive summary
             summary = {
-                'request_info': request_data,
-                'processing_date': datetime.now().isoformat(),
-                'algorithm': {
-                    'name': 'BAITSSS (Biosphere-Atmosphere Interactions Two-Source Surface)',
-                    'type': 'Two-source energy balance model',
-                    'description': 'Complete implementation of BAITSSS ET algorithm'
+                'processing_info': {
+                    'algorithm': f'BAITSSS ({"Debug" if self.debug else "Memory Optimized"} Mode)',
+                    'processing_date': datetime.now().isoformat(),
+                    'block_size': self.block_size,
+                    'temporal_continuity': True,
+                    'total_processed_files': processed_files_count,
+                    'physics_module': 'BAITSSSAlgorithm',
+                    'workflow_module': 'ETAlgorithm',
+                    'debug_mode': self.debug,
+                    'intermediate_files_saved': self.debug,
+                    'memory_optimization': not self.debug,
+                    'final_files_saved': ['ET_final_result.tif']
                 },
-                'results': {
-                    'final_et_map_tif': final_tif,
-                    'final_et_visualization_png': final_png,
-                    'format': 'GeoTIFF and PNG',
+                'output_files': {
+                    'final_et_map': final_tif,
+                    'format': 'GeoTIFF',
                     'units': 'mm/day',
-                    'spatial_alignment': 'All datasets perfectly aligned',
-                    'temporal_resolution': 'Hourly calculations aggregated to daily and period means'
+                    'description': 'Mean ET over processing period'
                 }
             }
             
-            # Calculate comprehensive statistics
-            with rasterio.open(final_tif) as src:
-                et_data = src.read(1)
-                valid_data = et_data[et_data != -9999]
-                
-                if len(valid_data) > 0:
-                    summary['statistics'] = {
-                        'min_et_mm_day': float(np.min(valid_data)),
-                        'max_et_mm_day': float(np.max(valid_data)),
-                        'mean_et_mm_day': float(np.mean(valid_data)),
-                        'median_et_mm_day': float(np.median(valid_data)),
-                        'std_et_mm_day': float(np.std(valid_data)),
-                        'valid_pixels': int(len(valid_data)),
-                        'total_pixels': int(et_data.size),
-                        'coverage_percent': float(100 * len(valid_data) / et_data.size)
-                    }
+            if self.debug:
+                summary['processing_info']['intermediate_files_location'] = output_dir
+                summary['processing_info']['note'] = 'All intermediate enhanced files saved for debugging'
+            else:
+                summary['processing_info']['note'] = 'Intermediate files kept in memory only'
             
-            # Count enhanced hourly files
-            enhanced_files = glob.glob(os.path.join(output_dir, "*_enhanced.tif"))
-            summary['file_counts'] = {
-                'enhanced_hourly_files': len(enhanced_files),
-                'description': 'Each enhanced file contains all datasets + BAITSSS ET per pixel'
-            }
+            # Calculate statistics if final file exists
+            if os.path.exists(final_tif):
+                with rasterio.open(final_tif) as src:
+                    et_data = src.read(1)
+                    valid_data = et_data[et_data != -9999]
+                    
+                    if len(valid_data) > 0:
+                        summary['statistics'] = {
+                            'min_et_mm_day': float(np.min(valid_data)),
+                            'max_et_mm_day': float(np.max(valid_data)),
+                            'mean_et_mm_day': float(np.mean(valid_data)),
+                            'median_et_mm_day': float(np.median(valid_data)),
+                            'std_et_mm_day': float(np.std(valid_data)),
+                            'valid_pixels': int(len(valid_data)),
+                            'total_pixels': int(et_data.size),
+                            'coverage_percent': float(100 * len(valid_data) / et_data.size)
+                        }
             
-            # Save comprehensive summary
+            # Save summary
             summary_path = os.path.join(output_dir, "ET_comprehensive_summary.json")
-            FileManager.save_json(summary, summary_path)
+            with open(summary_path, 'w') as f:
+                json.dump(summary, f, indent=2)
             
-            LoggingUtils.print_success(f"Comprehensive ET summary created: {summary_path}")
+            print(f"JSON summary created: {summary_path}")
             
         except Exception as e:
-            LoggingUtils.print_error(f"Error creating comprehensive ET summary: {e}")
+            print(f"Error creating JSON summary: {e}")
+
+
+class ETResultsManager:
+    @staticmethod
+    def create_comprehensive_et_summary(output_dir: str, request_data: Dict):
+        """Create comprehensive summary report of ET results"""
+        et_algorithm = ETAlgorithm()
+        et_algorithm._create_json_summary(output_dir, 0)

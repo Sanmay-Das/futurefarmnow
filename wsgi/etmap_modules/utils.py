@@ -192,26 +192,33 @@ class GeospatialUtils:
     """
     Geospatial utility functions
     """
-    
     @staticmethod
-    def create_aoi_shapefile(geometry_dict: dict, output_shapefile: str):
-        """
-        Create AOI shapefile from geometry
+    def create_aoi_geojson(geometry_dict: dict, output_path: str):
+        """Create GeoJSON file from geometry dictionary"""
+        import json
+        import os
         
-        Args:
-            geometry_dict: Geometry dictionary
-            output_shapefile: Output shapefile path
-        """
-        aoi_geom = shape(geometry_dict)
-        gdf = gpd.GeoDataFrame(
-            {'id': [1], 'name': ['Dynamic_AOI'], 'source': ['curl_command']},
-            geometry=[aoi_geom],
-            crs='EPSG:4326'
-        )
+        # Create GeoJSON structure
+        geojson = {
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "properties": {
+                    "name": "AOI",
+                    "description": "Area of Interest for ETMap processing"
+                },
+                "geometry": geometry_dict
+            }]
+        }
         
-        FileManager.ensure_directory_exists(os.path.dirname(output_shapefile))
-        gdf.to_file(output_shapefile)
-        print(f"✓ AOI shapefile created: {output_shapefile}")
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        
+        # Save as GeoJSON
+        with open(output_path, 'w') as f:
+            json.dump(geojson, f, indent=2)
+        
+        print(f"AOI GeoJSON created: {output_path}")
     
     @staticmethod
     def serialize_geometry_metadata(aoi_metadata: Dict) -> Dict:

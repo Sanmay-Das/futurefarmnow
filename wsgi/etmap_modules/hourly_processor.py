@@ -141,8 +141,8 @@ class CompleteETMapProcessor:
             print(f"  Output path: {output_base_path}")
             
             # Create AOI shapefile
-            aoi_shapefile = os.path.join(output_base_path, "AOI/dynamic_aoi.shp")
-            GeospatialUtils.create_aoi_shapefile(request_data['geometry'], aoi_shapefile)
+            aoi_geojson = os.path.join(output_base_path, "AOI/dynamic_aoi.geojson")
+            GeospatialUtils.create_aoi_geojson(request_data['geometry'], aoi_geojson)
             
             # Collect sample datasets
             LoggingUtils.print_step_header("Collecting Sample Datasets")
