@@ -41,13 +41,36 @@ Usage:
 - For static file hosting, place files in the `../public_html` directory relative to this script.
 """
 
-from flask import Flask, send_from_directory, jsonify
+from flask import Flask, send_from_directory, jsonify, make_response
 from soil_stats import soil_stats_bp
 from soil_sample import soil_sample_bp
 from ndvi_timeseries import ndvi_timeseries_bp
 from ETrawdata import etrawdata_bp
 
 app = Flask(__name__)
+
+# Manual CORS configuration - prevents duplicate headers
+@app.after_request
+def after_request(response):
+    # Only add CORS headers if they don't already exist
+    if not response.headers.get('Access-Control-Allow-Origin'):
+        response.headers['Access-Control-Allow-Origin'] = '*'
+    if not response.headers.get('Access-Control-Allow-Headers'):
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization'
+    if not response.headers.get('Access-Control-Allow-Methods'):
+        response.headers['Access-Control-Allow-Methods'] = 'GET,PUT,POST,DELETE,OPTIONS'
+    return response
+
+# Handle OPTIONS requests for CORS preflight
+@app.before_request
+def handle_preflight():
+    from flask import request
+    if request.method == "OPTIONS":
+        response = make_response()
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization'
+        response.headers['Access-Control-Allow-Methods'] = 'GET,PUT,POST,DELETE,OPTIONS'
+        return response
 
 # Register blueprints
 app.register_blueprint(soil_stats_bp)
