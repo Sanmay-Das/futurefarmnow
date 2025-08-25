@@ -1,0 +1,428 @@
+/* Reset and Base Styles */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: #f5f7fa;
+    color: #333;
+}
+
+/* Header Styles */
+.header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 1rem 2rem;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+}
+
+.header h1 {
+    font-size: 1.8rem;
+    font-weight: 300;
+}
+
+.header p {
+    opacity: 0.9;
+    margin-top: 0.5rem;
+}
+
+/* Layout */
+.main-container {
+    display: grid;
+    grid-template-columns: 400px 1fr;
+    height: calc(100vh - 100px);
+    gap: 1rem;
+    padding: 1rem;
+}
+
+.sidebar {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    overflow-y: auto;
+    padding: 1.5rem;
+}
+
+.map-container {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    overflow: hidden;
+}
+
+#map {
+    height: 100%;
+    width: 100%;
+}
+
+/* Debug Info */
+.debug-info {
+    background: #e8f5e8;
+    padding: 1rem;
+    border-radius: 4px;
+    margin-bottom: 1.5rem;
+    font-size: 0.8rem;
+    border-left: 4px solid #28a745;
+}
+
+#coordinates {
+    font-family: monospace;
+    font-weight: bold;
+    color: #2c5530;
+}
+
+/* Sections */
+.section {
+    display: none;
+    margin-bottom: 1.5rem;
+}
+
+.section.active {
+    display: block;
+}
+
+.section h3 {
+    color: #667eea;
+    margin-bottom: 1rem;
+    font-size: 1.1rem;
+}
+
+/* Form Styles */
+.form-group {
+    margin-bottom: 1rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    color: #555;
+}
+
+.form-group input {
+    width: 100%;
+    padding: 0.75rem;
+    border: 2px solid #e1e5e9;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    transition: border-color 0.2s;
+}
+
+.form-group input:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+/* Button Styles */
+.btn {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    padding: 0.75rem 1.5rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: transform 0.2s, box-shadow 0.2s;
+    width: 100%;
+    margin-bottom: 0.5rem;
+}
+
+.btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.btn-secondary {
+    background: #6c757d;
+}
+
+.btn-secondary:hover:not(:disabled) {
+    box-shadow: 0 4px 12px rgba(108, 117, 125, 0.4);
+}
+
+.btn-danger {
+    background: #dc3545;
+}
+
+.btn-danger:hover:not(:disabled) {
+    box-shadow: 0 4px 12px rgba(220, 53, 69, 0.4);
+}
+
+/* Navigation Buttons */
+.navigation-buttons {
+    margin-top: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.navigation-buttons .btn {
+    margin-bottom: 0;
+}
+
+/* Geometry Info */
+.geometry-info {
+    background: #f0f0f0;
+    padding: 0.75rem;
+    border-radius: 4px;
+    margin-top: 0.5rem;
+    font-size: 0.8rem;
+    color: #666;
+}
+
+/* Status Section Styles */
+.status-item {
+    display: flex;
+    align-items: center;
+    margin-bottom: 0.75rem;
+    padding: 0.5rem;
+    border-radius: 6px;
+    background: #f8f9fa;
+    transition: all 0.3s ease;
+}
+
+.status-item.error {
+    background: #ffeaea;
+    border-left: 4px solid #dc3545;
+}
+
+.status-icon {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    margin-right: 0.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    color: white;
+    flex-shrink: 0;
+}
+
+.status-waiting {
+    background: #6c757d;
+}
+
+.status-progress {
+    background: #ffc107;
+    animation: pulse 2s infinite;
+}
+
+.status-success {
+    background: #28a745;
+}
+
+.status-error {
+    background: #dc3545;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
+}
+
+/* Progress Bar */
+.progress-bar {
+    width: 100%;
+    height: 8px;
+    background: #e9ecef;
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 1rem 0;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #667eea, #764ba2);
+    width: 0%;
+    transition: width 0.5s ease;
+}
+
+/* Message Styles */
+.error-message {
+    background: #f8d7da;
+    color: #721c24;
+    padding: 1rem;
+    border-radius: 6px;
+    margin: 1rem 0;
+    border-left: 4px solid #dc3545;
+    animation: slideIn 0.3s ease-out;
+}
+
+.success-message {
+    background: #d4edda;
+    color: #155724;
+    padding: 1rem;
+    border-radius: 6px;
+    margin: 1rem 0;
+    border-left: 4px solid #28a745;
+    animation: slideIn 0.3s ease-out;
+}
+
+.request-info {
+    background: #e3f2fd;
+    padding: 1rem;
+    border-radius: 6px;
+    margin: 1rem 0;
+    font-family: monospace;
+    font-size: 0.8rem;
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Enhanced Button States for Better UX */
+.btn.loading {
+    position: relative;
+    color: transparent;
+}
+
+.btn.loading::after {
+    content: '';
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    top: 50%;
+    left: 50%;
+    margin-left: -8px;
+    margin-top: -8px;
+    border: 2px solid #ffffff;
+    border-radius: 50%;
+    border-top-color: transparent;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Results Section Enhancements */
+.results-section {
+    animation: fadeIn 0.5s ease-in-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* Enhanced Map Controls */
+#et-overlay-controls .btn {
+    font-size: 0.8rem;
+    padding: 0.5rem 0.75rem;
+    min-width: auto;
+    width: auto;
+    margin-right: 0.25rem;
+    margin-bottom: 0.25rem;
+}
+
+/* Improved Mobile Responsiveness */
+@media (max-width: 1024px) {
+    .main-container {
+        grid-template-columns: 350px 1fr;
+    }
+}
+
+@media (max-width: 768px) {
+    .main-container {
+        grid-template-columns: 1fr;
+        grid-template-rows: 450px 1fr;
+        height: auto;
+        gap: 0.5rem;
+        padding: 0.5rem;
+    }
+    
+    .header {
+        padding: 1rem;
+    }
+    
+    .header h1 {
+        font-size: 1.4rem;
+    }
+    
+    .sidebar {
+        padding: 1rem;
+        max-height: 450px;
+        overflow-y: auto;
+    }
+    
+    .navigation-buttons {
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 0.25rem;
+    }
+    
+    .navigation-buttons .btn {
+        flex: 1;
+        min-width: 120px;
+        font-size: 0.8rem;
+        padding: 0.6rem 1rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .navigation-buttons {
+        flex-direction: column;
+    }
+    
+    .navigation-buttons .btn {
+        width: 100%;
+    }
+    
+    .header h1 {
+        font-size: 1.2rem;
+    }
+    
+    .main-container {
+        padding: 0.25rem;
+    }
+}
+
+/* Accessibility Improvements */
+.btn:focus {
+    outline: 2px solid #667eea;
+    outline-offset: 2px;
+}
+
+.form-group input:focus {
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+/* Smooth transitions for section changes */
+.section {
+    transition: opacity 0.3s ease-in-out;
+}
+
+.section.active {
+    opacity: 1;
+}
+
+/* Enhanced status indicators */
+.status-item:hover {
+    background: #e9ecef;
+    transform: translateX(2px);
+}
+
+.status-item.error:hover {
+    background: #f5c6cb;
+}

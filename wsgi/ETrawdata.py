@@ -4,6 +4,7 @@ import json
 import uuid
 import threading
 import sqlite3
+import subprocess
 from datetime import datetime
 from enum import Enum
 from flask import Blueprint, request, jsonify, send_file, redirect, url_for
@@ -30,6 +31,11 @@ fetch_manager = DataFetchManager()
 fetch_manager.register_fetcher('landsat', LandsatFetcher())
 fetch_manager.register_fetcher('prism', PRISMFetcher())
 fetch_manager.register_fetcher('nldas', NLDASFetcher())
+
+# Configuration for automatic calculation
+AUTO_CALCULATION_ENABLED = True
+# Use absolute path based on the server script location
+ETCALCULATION_SCRIPT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ETCalculation.py")
 
 @etrawdata_bp.route('/v1/etmap', methods=['POST'])
 def create_etmap_request():
@@ -58,6 +64,17 @@ def create_etmap_request():
     # Check for existing job with same parameters
     existing_request_id = job_manager.find_existing_job(date_from, date_to, request_data['geometry'])
     if existing_request_id:
+        # For existing jobs, check if we should trigger auto-calculation
+        job_status_data = job_manager.get_job_status(existing_request_id)
+        if job_status_data and job_status_data['status'] == JobStatus.SUCCESS.value:
+            # Data collection already complete, trigger calculation if enabled
+            if AUTO_CALCULATION_ENABLED:
+                threading.Thread(
+                    target=trigger_automatic_calculation,
+                    args=(existing_request_id,),
+                    daemon=True
+                ).start()
+        
         return jsonify({'request_id': existing_request_id}), 200
 
     # Create new job
@@ -104,24 +121,63 @@ def get_etmap_result(request_id: str):
     
     job_status = job_status_data['status']
     
-    if job_status != JobStatus.SUCCESS.value:
+    if job_status not in ['calculation_complete', 'success']:
         return redirect(url_for('etrawdata.get_etmap_status', request_id=request_id))
     
-    # Return info about collected raw data
+    # Return info about completed ET calculation
     return jsonify({
-        'message': 'Data collection completed',
-        'data_folders': {
-            'landsat_b4': RawDataConfig.LANDSAT_B4_DIR,
-            'landsat_b5': RawDataConfig.LANDSAT_B5_DIR,
-            'prism_daily': RawDataConfig.PRISM_DIR
+        'message': 'ET calculation completed',
+        'request_id': request_id,
+        'status': job_status,
+        'results': {
+            'et_map_url': f'/v1/etmap/{request_id}.png'
         },
-        'note': 'Raw data ready for processing/alignment phase. Only missing data was fetched.',
-        'caching': 'Spatial coverage checking enabled - overlapping requests use existing data'
+        'note': 'ET calculations completed successfully. Use et_map_url to view the result.'
     }), 200
+
+@etrawdata_bp.route('/v1/etmap/<string:request_id>.png', methods=['GET'])
+def get_et_map_image(request_id: str):
+    """
+    Serve the ET map PNG for a completed request
+    """
+    try:
+        uuid.UUID(request_id)
+    except ValueError:
+        return jsonify({'error': 'Invalid request ID format'}), 400
+    
+    # Check if request exists and is completed
+    job_status_data = job_manager.get_job_status(request_id)
+    if not job_status_data:
+        return jsonify({'error': 'Request not found'}), 404
+    
+    job_status = job_status_data['status']
+    if job_status not in ['calculation_complete', 'success']:
+        return jsonify({'error': 'ET calculation not completed yet', 'current_status': job_status}), 400
+    
+    # Construct path to ET result PNG
+    from etmap_modules.config import ETMapConfig
+    output_path = ETMapConfig.get_output_path(request_id)
+    et_png_path = os.path.join(output_path, 'et_enhanced', 'ET_final_result.png')
+    
+    # Check if PNG file exists
+    if not os.path.exists(et_png_path):
+        return jsonify({'error': 'ET map image not found', 'expected_path': et_png_path}), 404
+    
+    # Serve the PNG file
+    from flask import send_file
+    try:
+        return send_file(
+            et_png_path,
+            mimetype='image/png',
+            as_attachment=False,
+            download_name=f'ET_map_{request_id}.png'
+        )
+    except Exception as e:
+        return jsonify({'error': f'Failed to serve ET map: {str(e)}'}), 500
 
 def execute_data_collection(request_id: str, request_data: dict):
     """
-    Execute data collection with spatial coverage checking
+    Execute data collection with spatial coverage checking and automatic calculation trigger
     """
     print(f"Starting data collection for request {request_id}")
     
@@ -164,6 +220,11 @@ def execute_data_collection(request_id: str, request_data: dict):
         if not datasets_to_fetch:
             print("All data already available locally - no fetching needed!")
             job_manager.update_status(request_id, JobStatus.SUCCESS)
+            
+            # Trigger automatic calculation since data is ready
+            if AUTO_CALCULATION_ENABLED:
+                trigger_automatic_calculation(request_id)
+            
             return
         
         print(f"Need to fetch {len(datasets_to_fetch)} datasets: {datasets_to_fetch}")
@@ -217,9 +278,116 @@ def execute_data_collection(request_id: str, request_data: dict):
                 job_manager.update_status(request_id, JobStatus.FAILED, f"{dataset}: {str(e)}")
                 return
         
+        # Mark data collection as successful
         job_manager.update_status(request_id, JobStatus.SUCCESS)
         print(f"Data collection completed for request {request_id}")
+        
+        # Step 3: Trigger automatic calculation
+        if AUTO_CALCULATION_ENABLED:
+            print(f"Triggering automatic ET calculation for request {request_id}")
+            trigger_automatic_calculation(request_id)
+        else:
+            print("Automatic calculation disabled. Use manual command:")
+            print(f"python3 ETCalculation.py --uuid {request_id}")
         
     except Exception as e:
         print(f"Error in data collection: {e}")
         job_manager.update_status(request_id, JobStatus.FAILED, str(e))
+
+def trigger_automatic_calculation(request_id: str):
+    """
+    Trigger the ETCalculation.py script automatically as a separate process with output capture
+    """
+    try:
+        print(f"[AUTO-CALC] Starting automatic calculation for UUID: {request_id}")
+        
+        # 🆕 ADD THIS: Update status to calculation started
+        job_manager.update_status(request_id, JobStatus.CALCULATION_STARTED)
+        
+        # Get the absolute path to the database that the server is using
+        server_db_path = db.db_path if hasattr(db, 'db_path') else 'etmap.db'
+        absolute_db_path = os.path.abspath(server_db_path)
+        
+        print(f"[AUTO-CALC] Using database path: {absolute_db_path}")
+        
+        # Construct the command to run ETCalculation.py with explicit database path
+        cmd = [
+            sys.executable,  # Use the same Python interpreter
+            ETCALCULATION_SCRIPT_PATH,
+            "--uuid", request_id,
+            "--db-path", absolute_db_path
+        ]
+        
+        print(f"[AUTO-CALC] Executing command: {' '.join(cmd)}")
+        
+        # Launch process with output capture but non-blocking
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # Combine stderr with stdout
+            text=True,
+            bufsize=1,  # Line buffered
+            universal_newlines=True
+        )
+        
+        print(f"[AUTO-CALC] ET calculation process started with PID: {process.pid}")
+        
+        # Start a thread to monitor the process output without blocking the server
+        threading.Thread(
+            target=monitor_calculation_process,
+            args=(process, request_id),
+            daemon=True
+        ).start()
+        
+    except FileNotFoundError:
+        print(f"[AUTO-CALC] ERROR: ETCalculation.py not found at path: {ETCALCULATION_SCRIPT_PATH}")
+        print(f"[AUTO-CALC] Please update ETCALCULATION_SCRIPT_PATH in the configuration")
+        print(f"[AUTO-CALC] Manual calculation: python3 ETCalculation.py --uuid {request_id}")
+        
+        # 🆕 ADD THIS: Update status to calculation failed
+        job_manager.update_status(request_id, JobStatus.CALCULATION_FAILED, "ETCalculation.py not found")
+        
+    except Exception as e:
+        print(f"[AUTO-CALC] ERROR: Failed to trigger automatic calculation: {e}")
+        print(f"[AUTO-CALC] Manual calculation: python3 ETCalculation.py --uuid {request_id}")
+        
+        # 🆕 ADD THIS: Update status to calculation failed
+        job_manager.update_status(request_id, JobStatus.CALCULATION_FAILED, str(e))
+
+def monitor_calculation_process(process, request_id: str):
+    """
+    Monitor the ETCalculation.py process output in a separate thread
+    """
+    try:
+        print(f"[AUTO-CALC] Monitoring calculation process for UUID: {request_id}")
+        
+        # Read output line by line
+        for line in process.stdout:
+            line = line.strip()
+            if line:
+                print(f"[CALC-{request_id[:8]}] {line}")
+        
+        # Wait for process to complete
+        return_code = process.wait()
+        
+        if return_code == 0:
+            print(f"[AUTO-CALC] ✓ Calculation completed successfully for UUID: {request_id}")
+            print(f"[AUTO-CALC] Check output in UUID folder: {request_id}")
+            
+            # 🆕 ADD THIS: Update status to calculation complete
+            job_manager.update_status(request_id, JobStatus.CALCULATION_COMPLETE)
+            
+        else:
+            print(f"[AUTO-CALC] ✗ Calculation failed for UUID: {request_id}")
+            print(f"[AUTO-CALC] Process exited with code: {return_code}")
+            print(f"[AUTO-CALC] Try manual debugging: python3 ETCalculation.py --uuid {request_id}")
+            
+            # 🆕 ADD THIS: Update status to calculation failed
+            job_manager.update_status(request_id, JobStatus.CALCULATION_FAILED, f"Process exited with code {return_code}")
+            
+    except Exception as e:
+        print(f"[AUTO-CALC] ERROR monitoring calculation process: {e}")
+        print(f"[AUTO-CALC] Try manual debugging: python3 ETCalculation.py --uuid {request_id}")
+        
+        # 🆕 ADD THIS: Update status to calculation failed
+        job_manager.update_status(request_id, JobStatus.CALCULATION_FAILED, str(e))

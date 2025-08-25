@@ -5,6 +5,7 @@ import json
 import uuid
 import requests
 import time
+import numpy as np
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 from etmap_modules.grid_manager import UnifiedGridManager
@@ -13,6 +14,7 @@ from etmap_modules.data_processors import NLDASProcessor, LandsatProcessor, PRIS
 from etmap_modules.hourly_processor import CompleteETMapProcessor as ModularProcessor
 from etmap_modules.utils import DatabaseManager, FileManager, GeospatialUtils
 from etmap_modules.config import ETMapConfig
+from etmap_modules.et_algorithm import ETAlgorithm
 
 
 class ETCalculationManager:
@@ -20,6 +22,7 @@ class ETCalculationManager:
         self.db_path = db_path or ETMapConfig.DB_PATH
         self.db_manager = DatabaseManager(self.db_path)
         self.processor = ModularProcessor(db_path=self.db_path)
+        self.et_algorithm = ETAlgorithm()
     
     def process_with_curl_integration(self, curl_command: str, output_path: str = None) -> bool:
         """
@@ -75,14 +78,19 @@ class ETCalculationManager:
             success = self.processor.process_by_request_id(request_id, output_path)
             
             if success:
-                print("\n" + "="*60)
-                print("COMPLETE ETMAP CALCULATION FINISHED!")
-                print(f"Results stored in UUID folder: {request_id}")
-                print(f"Location: {output_path}")
-                print(f"Hourly aligned files: {output_path}/hourly_aligned/")
-                print("Ready for QGIS and ET model calculations!")
-                print("="*60)
-                return True
+                if self._run_et_step(output_path):
+                    print("\n" + "="*60)
+                    print("COMPLETE ETMAP CALCULATION FINISHED!")
+                    print(f"Results stored in UUID folder: {request_id}")
+                    print(f"Location: {output_path}")
+                    print(f"Hourly aligned files: {output_path}/hourly_aligned/")
+                    print(f"ET-enhanced files: {output_path}/et_enhanced/")
+                    print("Ready for QGIS and ET analysis!")
+                    print("="*60)
+                    return True
+                else:
+                    print("ERROR: ET enhancement step failed")
+                    return False
             else:
                 print("ERROR: Data processing failed")
                 return False
@@ -119,15 +127,42 @@ class ETCalculationManager:
         success = self.processor.process_by_request_id(request_id, output_path)
         
         if success:
-            print("\n" + "="*60)
-            print("ETMAP CALCULATION COMPLETED!")
-            print(f"Results stored in UUID folder: {request_id}")
-            print(f"Location: {output_path}")
-            print("="*60)
-            return True
+            if self._run_et_step(output_path):
+                print("\n" + "="*60)
+                print("ETMAP CALCULATION COMPLETED WITH BAITSSS ET!")
+                print(f"Results stored in UUID folder: {request_id}")
+                print(f"Location: {output_path}")
+                print(f"ET-enhanced files: {output_path}/et_enhanced/")
+                print("="*60)
+                return True
+            else:
+                print("ERROR: ET enhancement step failed")
+                return False
         else:
             print("ERROR: Data processing failed")
             return False
+        
+    def _run_et_step(self, output_path: str) -> bool:
+        hourly_dir = os.path.join(output_path, "hourly_aligned")
+        et_out_dir = os.path.join(output_path, "et_enhanced")
+
+        if not os.path.isdir(hourly_dir):
+            print(f"ERROR: Expected hourly directory missing: {hourly_dir}")
+            return False
+
+        print("\n=== Step 5: BAITSSS ET Enhancement ===")
+        print(f"Input hourly dir: {hourly_dir}")
+        print(f"Output ET dir   : {et_out_dir}")
+
+        try:
+            ok = self.et_algorithm.create_enhanced_hourly_files_with_et(hourly_dir, et_out_dir)
+            return bool(ok)
+        except Exception as e:
+            print(f"ERROR: ET step crashed: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
     
     def _extract_api_url(self, curl_command: str) -> Optional[str]:
         """Extract API URL from curl command"""
@@ -247,8 +282,7 @@ class ETCalculationManager:
 
 class CompleteETMapProcessor:
     """
-    Complete processor that creates both basic aligned datasets AND hourly aligned files
-    Based on the original ETCalculation.py logic but with UUID integration
+    Complete processor that creates basic aligned datasets, hourly aligned files, AND runs modular BAITSSS ET
     """
     
     def __init__(self, db_path: str = None):
@@ -262,14 +296,16 @@ class CompleteETMapProcessor:
         self.db_path = db_path or ETMapConfig.DB_PATH
         self.db_manager = DatabaseManager(self.db_path)
         
+        # Initialize modular ET Algorithm
+        self.et_algorithm = ETAlgorithm()
+        
     def process_complete_etmap_data(self, request_data: dict, output_base_path: str):
         """
-        Complete processing: basic alignment + hourly aligned files
-        Maintains the original logic flow from ETCalculation.py
+        Complete processing: basic alignment + hourly aligned files + modular BAITSSS ET
         """
         print("="*60)
-        print("COMPLETE ETMAP PROCESSOR")
-        print("Creates basic aligned data + hourly aligned files")
+        print("COMPLETE ETMAP PROCESSOR WITH MODULAR BAITSSS")
+        print("Creates basic aligned data + hourly aligned files + ET calculations")
         print("="*60)
         
         # Extract parameters from request
@@ -286,8 +322,8 @@ class CompleteETMapProcessor:
         print(f"  AOI area: ~{aoi_geometry.area * 111000 * 111000:.1f} km²")
         
         # Create AOI shapefile
-        aoi_shapefile = os.path.join(output_base_path, "AOI/dynamic_aoi.shp")
-        GeospatialUtils.create_aoi_shapefile(geometry_dict, aoi_shapefile)
+        aoi_geojson = os.path.join(output_base_path, "AOI/dynamic_aoi.geojson")
+        GeospatialUtils.create_aoi_shapefile(geometry_dict, aoi_geojson)
         
         # Collect sample datasets
         print("\n=== Collecting Sample Datasets ===")
@@ -318,15 +354,33 @@ class CompleteETMapProcessor:
         print("\n=== STEP 2: Creating Hourly Aligned Files ===")
         self._create_hourly_aligned_files(request_data, aoi_metadata, output_base_path)
 
-        print("\n=== STEP 3: Running BAITSSS ET Algorithm ===")
-        self._run_et_algorithm_processing(output_base_path)
-        
-        print("\n" + "="*60)
-        print("COMPLETE PROCESSING FINISHED!")
-        print(f"Basic aligned data: {output_base_path}/")
-        print(f"Hourly aligned files: {output_base_path}/hourly_aligned/")
-        print("Ready for QGIS verification!")
-        print("="*60)
+        # Run modular BAITSSS ET algorithm
+        print("\n=== STEP 3: Running Modular BAITSSS ET Algorithm ===")
+        et_success = self._run_modular_baitsss_et_processing(output_base_path)
+
+        # Final summary based on ET processing success
+        if et_success:
+            print("\n" + "="*60)
+            print("COMPLETE PROCESSING FINISHED WITH MODULAR BAITSSS ET!")
+            print(f"Basic aligned data: {output_base_path}/")
+            print(f"Hourly aligned files: {output_base_path}/hourly_aligned/")
+            print(f"ET enhanced files: {output_base_path}/et_enhanced/")
+            
+            # Check and display final ET map info
+            final_et_path = os.path.join(output_base_path, "et_enhanced", "ET_final_result.tif")
+            if os.path.exists(final_et_path):
+                print(f"Final ET map: {final_et_path}")
+                self._display_et_statistics(final_et_path)
+            
+            print("Ready for QGIS verification and ET analysis!")
+            print("="*60)
+        else:
+            print("\n" + "="*60)
+            print("PROCESSING COMPLETED BUT ET CALCULATIONS FAILED!")
+            print(f"Basic aligned data: {output_base_path}/")
+            print(f"Hourly aligned files: {output_base_path}/hourly_aligned/")
+            print("ET calculations failed - check logs for errors.")
+            print("="*60)
     
     def _process_landsat_data(self, aoi_metadata: dict, output_base_path: str):
         """Process Landsat data following the original logic"""
@@ -362,13 +416,75 @@ class CompleteETMapProcessor:
         
         print(f"Metadata saved: {request_file}, {metadata_file}")
 
+    def _run_modular_baitsss_et_processing(self, output_base_path: str) -> bool:
+        """
+        Run modular BAITSSS ET algorithm with clean separation of concerns
+        """
+        print("Starting Modular BAITSSS ET Processing...")
+        
+        # Path to hourly aligned files
+        hourly_aligned_dir = os.path.join(output_base_path, "hourly_aligned")
+        
+        # Output directory for ET enhanced files
+        et_enhanced_dir = os.path.join(output_base_path, "et_enhanced")
+        
+        if not os.path.exists(hourly_aligned_dir):
+            print(f"ERROR: Hourly aligned directory not found: {hourly_aligned_dir}")
+            return False
+        
+        try:
+            # Delegate to the modular ET algorithm
+            success = self.et_algorithm.create_enhanced_hourly_files_with_et(
+                hourly_files_dir=hourly_aligned_dir,
+                output_dir=et_enhanced_dir
+            )
+            
+            if success:
+                print("Modular BAITSSS ET processing finished successfully!")
+                print(f"Enhanced hourly files: {et_enhanced_dir}")
+                
+                # Verify final output exists
+                final_et_path = os.path.join(et_enhanced_dir, "ET_final_result.tif")
+                if os.path.exists(final_et_path):
+                    print(f"Final ET map verified: {final_et_path}")
+                    return True
+                else:
+                    print(f"Warning: Final ET map not found at {final_et_path}")
+                    return success  # Still return success if processing completed
+                
+            else:
+                print("Modular BAITSSS ET processing failed!")
+                return False
+                
+        except Exception as e:
+            print(f"ERROR: Modular BAITSSS ET processing failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def _display_et_statistics(self, final_et_path: str):
+        """Display quick ET statistics"""
+        try:
+            import rasterio
+            with rasterio.open(final_et_path) as src:
+                et_data = src.read(1)
+                valid_data = et_data[et_data != -9999]
+                if len(valid_data) > 0:
+                    print(f"ET Statistics:")
+                    print(f"    Min: {np.min(valid_data):.3f} mm/day")
+                    print(f"    Max: {np.max(valid_data):.3f} mm/day") 
+                    print(f"    Mean: {np.mean(valid_data):.3f} mm/day")
+                    print(f"    Valid pixels: {len(valid_data):,}")
+                    print(f"    Coverage: {100*len(valid_data)/et_data.size:.1f}%")
+        except Exception as e:
+            print(f"Could not calculate ET statistics: {e}")
+
 
 def main():
     """
-    Main function - creates both basic aligned data AND hourly aligned files
-    Now supports both curl command and request_id lookup
+    Main function - creates basic aligned data, hourly aligned files, AND runs modular BAITSSS ET
     """
-    parser = argparse.ArgumentParser(description='Complete ETMap Processor with UUID Integration')
+    parser = argparse.ArgumentParser(description='Complete ETMap Processor with Modular BAITSSS ET')
     
     # Mutually exclusive group for input method
     input_group = parser.add_mutually_exclusive_group(required=True)
@@ -382,8 +498,9 @@ def main():
     args = parser.parse_args()
     
     print("="*60)
-    print("COMPLETE ETMAP PROCESSOR - UUID INTEGRATION")
-    print("Creates basic aligned data + hourly aligned files")
+    print("COMPLETE ETMAP PROCESSOR - MODULAR BAITSSS ET")
+    print("Creates basic aligned data + hourly aligned files + ET calculations")
+    print("Modular Architecture: ETAlgorithm ← BAITSSSAlgorithm")
     print("="*60)
     
     try:
@@ -397,17 +514,17 @@ def main():
         
         if args.curl:
             # Full workflow: submit request, wait for data collection, then process
-            print("Starting full ETMap calculation workflow...")
+            print("Starting full ETMap calculation workflow with modular BAITSSS ET...")
             success = calc_manager.process_with_curl_integration(args.curl, args.output_path)
             
         elif args.uuid:
             # Process existing UUID (data collection already completed)
-            print("Processing existing UUID...")
+            print("Processing existing UUID with modular BAITSSS ET...")
             success = calc_manager.process_with_existing_uuid(args.uuid, args.output_path)
         
         if success:
             print("\n" + "="*60)
-            print("ETMAP CALCULATION COMPLETED SUCCESSFULLY!")
+            print("ETMAP CALCULATION WITH MODULAR BAITSSS ET COMPLETED SUCCESSFULLY!")
             print("="*60)
             sys.exit(0)
         else:

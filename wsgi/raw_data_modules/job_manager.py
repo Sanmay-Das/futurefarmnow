@@ -6,6 +6,7 @@ from .database import RawDataDatabase
 
 class JobStatus(Enum):
     """Job status enumeration"""
+    # Data collection statuses
     QUEUED = "queued"
     CHECKING_COVERAGE = "checking_coverage"
     LANDSAT_STARTED = "landsat_started"
@@ -20,8 +21,15 @@ class JobStatus(Enum):
     NLDAS_DONE = "nldas_done"
     NLDAS_ERROR = "nldas_error"
     NLDAS_SKIPPED = "nldas_skipped_covered"
+    
+    # Data collection complete
     SUCCESS = "success"
     FAILED = "failed"
+    
+    # ET calculation statuses
+    CALCULATION_STARTED = "calculation_started"
+    CALCULATION_COMPLETE = "calculation_complete"
+    CALCULATION_FAILED = "calculation_failed"
 
 class RawDataJobManager:
     """

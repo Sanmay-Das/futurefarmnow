@@ -28,7 +28,7 @@ class ETMapConfig:
     
     # Static data paths
     STATIC_DATA_PATHS = {
-        'elevation': os.path.join(DATA_BASE_PATH, 'Elevation/elevation_raw_30m.tif'),
+        'elevation': os.path.join(DATA_BASE_PATH, 'LF2020_Elev_220_CONUS/Tif/LC20_Elev_220.tif'),
         'soil_awc': os.path.join(DATA_BASE_PATH, 'Soil_Data/awc_gNATSGO_US.tif'),
         'soil_fc': os.path.join(DATA_BASE_PATH, 'Soil_Data/fc_gNATSGO_US.tif'),
         'nlcd': os.path.join(DATA_BASE_PATH, 'NLCD/Annual_NLCD_LndCov_2024_CU_C1V1/Annual_NLCD_LndCov_2024_CU_C1V1.tif')

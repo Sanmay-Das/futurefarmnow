@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FutureFarmNow</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="header">
+        <h1>FutureFarmNow</h1>
+        <p>Create requests, track progress, and visualize ET calculations</p>
+    </div>
+
+    <div class="main-container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <!-- Debug Info -->
+            <div class="debug-info">
+                <strong>Status:</strong> <span id="status">Initializing...</span><br>
+                <strong>Map:</strong> <span id="map-status">Not loaded</span><br>
+                <strong>Draw Tools:</strong> <span id="draw-status">Not loaded</span><br>
+                <strong>Coordinates:</strong> <span id="coordinates">Move mouse over map</span>
+            </div>
+
+            <!-- Form Section (Home Screen) -->
+            <div class="section active" id="form-section">
+                <h3>Create New Request</h3>
+                
+                <div class="form-group">
+                    <label for="fromDate">Start Date:</label>
+                    <input type="date" id="fromDate" value="2024-04-16">
+                </div>
+                
+                <div class="form-group">
+                    <label for="toDate">End Date:</label>
+                    <input type="date" id="toDate" value="2024-04-17">
+                </div>
+                
+                <div class="form-group">
+                    <label>Area of Interest:</label>
+                    <div class="geometry-info" id="geometry-info">
+                        Draw a polygon on the map to define your area of interest
+                    </div>
+                </div>
+                
+                <button class="btn" id="submitBtn" disabled>
+                    Submit Request
+                </button>
+                
+                <button class="btn btn-secondary" id="clearBtn">
+                    Clear Map
+                </button>
+
+                <button class="btn btn-secondary" id="testBtn">
+                    Test Map Function
+                </button>
+            </div>
+
+            <!-- Status Section -->
+            <div class="section" id="status-section">
+                <h3>Request Status</h3>
+                
+                <div class="request-info" id="request-info"></div>
+                
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progress-fill"></div>
+                </div>
+                
+                <div id="status-list"></div>
+                
+                <div id="error-container"></div>
+                
+                <div class="navigation-buttons">
+                    <button class="btn btn-secondary" onclick="goBackHome()" style="margin-top: 1rem;">
+                        Create New Request
+                    </button>
+                    <button class="btn btn-secondary" onclick="cancelAndGoBack()" style="margin-top: 0.5rem;">
+                        Cancel & Go Back
+                    </button>
+                </div>
+            </div>
+
+            <!-- Results Section -->
+            <div class="section" id="results-section">
+                <h3>Results</h3>
+                
+                <div class="success-message">
+                    Processing completed successfully!
+                </div>
+                
+                <div id="results-info"></div>
+                
+                <div class="navigation-buttons">
+                    <button class="btn" onclick="viewResultsOnMap()">
+                        View Results on Map
+                    </button>
+                    <button class="btn btn-secondary" onclick="createAnotherRequest()" style="margin-top: 0.5rem;">
+                        Create Another Request
+                    </button>
+                </div>
+                
+            </div>
+        </div>
+
+        <!-- Map Container -->
+        <div class="map-container">
+            <div id="map"></div>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+    
+    <!-- Custom JavaScript -->
+    <script src="js/app.js"></script>
+</body>
+</html>
