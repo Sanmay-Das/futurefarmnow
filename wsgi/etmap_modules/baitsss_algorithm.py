@@ -140,265 +140,327 @@ class BAITSSSAlgorithm:
             print(f"BAITSSS block processing error: {e}")
             return self._get_default_results(block_height, block_width)
 
-    def _extract_and_validate_variables(self, block_vars: Dict[str, np.ndarray], 
-                                      block_height: int, block_width: int) -> Dict[str, np.ndarray]:
-        """Extract and validate all input variables - CORRECTED VARIABLE MAPPING"""
-        
-        # Map input variable names to internal BAITSSS names
+    def _extract_and_validate_variables(self, block_vars: Dict[str, np.ndarray],
+                                    block_height: int, block_width: int) -> Dict[str, np.ndarray]:
+        """
+        Extract all inputs for a block, apply defaults, and normalize units:
+        - Temperature forced to °C (auto-converts Kelvin)
+        - Humidity forced to RH (0–1). If input looks like specific humidity q (kg/kg), convert to RH.
+        - soil_fc converted to fraction if provided as percent.
+        - Physical sanity clips applied to prevent numeric blowups.
+        Returns a dict of float32 arrays shaped (block_height, block_width).
+        """
+        # 1) Map incoming names → internal names
         variable_mapping = {
             'soil_awc': 'soil_awc',
-            'soil_fc': 'soil_fc', 
+            'soil_fc': 'soil_fc',
             'elevation': 'elevation',
             'nlcd': 'nlcd',
             'precipitation': 'precipitation',
             'ndvi': 'ndvi',
             'lai': 'lai',
             'temperature': 'temperature',
-            'humidity': 'humidity', 
+            'humidity': 'humidity',
             'wind_speed': 'wind_speed',
             'radiation': 'radiation',
             'soil_moisture_surface_prev': 'soil_moisture_surface_prev',
             'soil_moisture_root_prev': 'soil_moisture_root_prev'
         }
-        
-        # Default values for missing variables
+
+        # 2) Defaults (rough but reasonable)
         defaults = {
-            'soil_awc': 0.15,        # 15% available water capacity
-            'soil_fc': 35.0,         # 35% field capacity (will be converted to fraction)
-            'elevation': 200.0,      # 200m elevation
-            'nlcd': 42.0,           # Evergreen forest
-            'precipitation': 0.0,    # No precipitation
-            'ndvi': 0.4,            # Moderate vegetation
-            'lai': 3.0,             # Reasonable LAI
-            'temperature': 15.0,     # 15°C
-            'humidity': 0.65,       # 65% humidity
-            'wind_speed': 3.0,      # 3 m/s wind
-            'radiation': 400.0,     # 400 W/m² radiation
-            'soil_moisture_surface_prev': 0.2,  # 20% soil moisture
-            'soil_moisture_root_prev': 0.3      # 30% root zone moisture
+            'soil_awc': 0.15,        # fraction
+            'soil_fc': 35.0,         # percent (will be turned into fraction)
+            'elevation': 200.0,      # meters
+            'nlcd': 42.0,            # landcover code
+            'precipitation': 0.0,    # mm/hour
+            'ndvi': 0.4,             # -
+            'lai': 3.0,              # m2/m2
+            'temperature': 15.0,     # °C
+            'humidity': 0.65,        # RH (0–1)
+            'wind_speed': 3.0,       # m/s
+            'radiation': 400.0,      # W/m2
+            'soil_moisture_surface_prev': 0.2,  # fraction
+            'soil_moisture_root_prev': 0.3      # fraction
         }
-        
-        variables = {}
-        
-        # Extract variables with proper mapping
-        for input_name, internal_name in variable_mapping.items():
-            if input_name in block_vars:
-                variables[internal_name] = block_vars[input_name].astype(np.float32)
+
+        # 3) Extract arrays (or fill with defaults)
+        variables: Dict[str, np.ndarray] = {}
+        for src_name, dst_name in variable_mapping.items():
+            if src_name in block_vars:
+                arr = block_vars[src_name].astype(np.float32)
+                # Ensure proper shape (block_height, block_width)
+                if arr.shape != (block_height, block_width):
+                    # Broadcast or pad if needed (very rare; usually exact slices)
+                    arr = np.full((block_height, block_width), np.nan, dtype=np.float32)
             else:
-                default_val = defaults.get(internal_name, 0.0)
-                variables[internal_name] = np.full((block_height, block_width), default_val, dtype=np.float32)
-        
-        # Data validation and preprocessing
+                arr = np.full((block_height, block_width), defaults[dst_name], dtype=np.float32)
+            variables[dst_name] = arr
+
+        # 4) Unit fixes
+        # Temperature: Kelvin → °C if it looks like Kelvin
+        if np.nanmedian(variables['temperature']) > 100.0:
+            variables['temperature'] = variables['temperature'] - 273.15
+
+        # Humidity normalization:
+        # If it looks like specific humidity q (< 0.2), convert to RH using pressure from elevation.
+        hum = variables['humidity']
+        if np.nanmax(hum) < 0.2:
+            T = variables['temperature']
+            elev = variables['elevation']
+            # Pressure (kPa) as function of elevation (m)
+            pressure = 101.3 * np.power(((293.0 - elev * 0.0065) / 293.0), 5.26)
+            # Saturation vapor pressure es (kPa)
+            es = 0.611 * np.exp((17.27 * T) / (T + 237.3))
+            # Convert q -> actual vapor pressure e (kPa)
+            e = (hum * pressure) / (0.622 + 0.378 * hum)
+            rh = np.clip(e / es, 0.01, 1.0)
+            variables['humidity'] = rh.astype(np.float32)
+        else:
+            # Already RH (0–1) or percentage
+            rh = hum / 100.0 if np.nanmax(hum) > 1.0 else hum
+            variables['humidity'] = np.clip(rh, 0.01, 1.0).astype(np.float32)
+
+        # 5) Sanity limits
         variables['lai'] = np.clip(variables['lai'], 0.0001, 6.0)
         variables['ndvi'] = np.clip(variables['ndvi'], -1.0, 1.0)
         variables['temperature'] = np.clip(variables['temperature'], -50.0, 60.0)
         variables['wind_speed'] = np.maximum(variables['wind_speed'], 2.0)
-        variables['humidity'] = np.clip(variables['humidity'], 0.1, 1.0)
         variables['radiation'] = np.maximum(variables['radiation'], 0.0)
-        
-        # Convert soil FC to fraction if needed (if values > 1, assume percentage)
-        if np.max(variables['soil_fc']) > 1.0:
+
+        # soil_fc: if provided as percent, convert to fraction
+        if np.nanmax(variables['soil_fc']) > 1.0:
             variables['soil_fc'] = variables['soil_fc'] / 100.0
-        
-        # Ensure soil moisture values are reasonable
+
+        # Soil moisture plausible ranges
         variables['soil_moisture_surface_prev'] = np.clip(variables['soil_moisture_surface_prev'], 0.01, 0.6)
-        variables['soil_moisture_root_prev'] = np.clip(variables['soil_moisture_root_prev'], 0.01, 0.6)
-        
+        variables['soil_moisture_root_prev']    = np.clip(variables['soil_moisture_root_prev'],    0.01, 0.6)
+
+        # Ensure float32 output
+        for k in list(variables.keys()):
+            variables[k] = variables[k].astype(np.float32)
+
         return variables
 
-    def _run_complete_baitsss_physics(self, variables: Dict[str, np.ndarray], 
-                                    block_height: int, block_width: int) -> Dict[str, np.ndarray]:
+
+    def _run_complete_baitsss_physics(self, variables: Dict[str, np.ndarray],
+                                  block_height: int, block_width: int) -> Dict[str, np.ndarray]:
         """
-        Complete BAITSSS physics implementation with iterative energy balance
+        Complete BAITSSS physics with iterative energy balance per block.
+
+        Inputs (arrays, float32, shape (H,W)):
+        - ndvi, lai, soil_awc, soil_fc (fraction), elevation (m), nlcd (code),
+            precipitation (PRISM daily mm/day), temperature (°C), humidity (RH 0–1),
+            wind_speed (m/s), radiation (W/m^2),
+            soil_moisture_surface_prev (fraction), soil_moisture_root_prev (fraction)
+
+        Returns:
+        dict with keys: 'et_hour', 'soil_surface', 'soil_root', 'irrigation',
+                        'precip_hour', 'etsoil_hour', 'etveg_hour', 'fc'
+        where ET terms are in mm/hour.
         """
-        # Extract variables for easier access
-        soil_awc = variables['soil_awc']
-        soil_fc = variables['soil_fc']
-        elevation = variables['elevation']
-        nlcd = variables['nlcd']
-        precipitation = variables['precipitation']
-        ndvi = variables['ndvi']
-        lai = variables['lai']
-        temperature = variables['temperature']
-        humidity = variables['humidity']
-        wind_speed = variables['wind_speed']
-        radiation = variables['radiation']
-        soil_moisture_prev = variables['soil_moisture_surface_prev']
-        soil_root_prev = variables['soil_moisture_root_prev']
-        
-        # Initialize flux variables for iteration
-        ETsoil_sec_prev = np.full((block_height, block_width), 7.0191862e-005)
-        ETveg_sec_prev = np.full((block_height, block_width), 5.089054e-006)
-        H_flux_soil_prev = np.zeros((block_height, block_width))
-        H_flux_veg_prev = np.zeros((block_height, block_width))
-        G_flux_soil_prev = np.zeros((block_height, block_width))
-        
-        # Derived soil parameters
-        theta_ref = soil_fc
-        theta_wilt = np.maximum(0.004, theta_ref - soil_awc)
-        raw = self.constants.MAD * soil_awc
-        thres_mois = theta_ref - raw
-        
-        # Atmospheric calculations
-        pressure = 101.3 * np.power(((293 - elevation * 0.0065) / 293), 5.26)
-        psyc_con = 0.000665 * pressure
-        tair_k = temperature + 273.15
-        
-        # Vegetation parameters
-        fc_eqn = (ndvi - self.constants.NDVImin) / (self.constants.NDVImax - self.constants.NDVImin)
-        fc = np.clip(fc_eqn, self.constants.fc_min, self.constants.fc_max)
-        
-        # Atmospheric emissivity and radiation
-        emis_ta = 1.0 - 0.261 * np.exp(-0.000777 * np.power(temperature, 2))
-        in_long = np.power(tair_k, 4) * self.constants.Stefan_Boltzamn * emis_ta
-        
-        # Vapor pressure
-        es = 0.611 * np.exp((17.27 * temperature) / (temperature + 237.3))
-        ea = (pressure * humidity) / (0.378 * humidity + 0.622)
-        
-        # Canopy structure
+        C = self.constants
+
+        # Unpack
+        soil_awc = variables['soil_awc'].astype(np.float32)
+        soil_fc  = variables['soil_fc'].astype(np.float32)
+        elevation = variables['elevation'].astype(np.float32)
+        nlcd = variables['nlcd'].astype(np.float32)
+        # PRISM daily precip → hourly (assume mm/day repeated per hour otherwise)
+        precip_hour = (variables['precipitation'] / 24.0).astype(np.float32)
+
+        ndvi = variables['ndvi'].astype(np.float32)
+        lai  = variables['lai'].astype(np.float32)
+        Tair = variables['temperature'].astype(np.float32)       # °C
+        RH   = np.clip(variables['humidity'], 0.01, 1.0)         # RH 0–1
+        Uz   = np.maximum(variables['wind_speed'], 0.1).astype(np.float32)
+        Rsw  = np.maximum(variables['radiation'], 0.0).astype(np.float32)
+
+        sm_prev = np.clip(variables['soil_moisture_surface_prev'], 0.01, 0.6).astype(np.float32)
+        rz_prev = np.clip(variables['soil_moisture_root_prev'],    0.01, 0.6).astype(np.float32)
+
+        # Derived constants/terms
+        TairK = Tair + 273.15
+        # Pressure (kPa) as function of elevation (m)
+        P = 101.3 * np.power(((293.0 - elevation * 0.0065) / 293.0), 5.26)  # kPa
+        psych = 0.000665 * P  # kPa/°C
+        # Air density ρ (kg/m^3): P in kPa → Pa
+        rho_air = (P * 1000.0) / (287.0 * TairK)
+
+        # Saturation/actual vapor pressure (kPa)
+        es = 0.611 * np.exp((17.27 * Tair) / (Tair + 237.3))
+        ea = RH * es
+
+        # Incoming longwave (simple Brutsaert-like emissivity)
+        emis_atm = 1.0 - 0.261 * np.exp(-0.000777 * (Tair ** 2))
+        Rlw_in = (TairK ** 4) * C.Stefan_Boltzamn * emis_atm  # W/m^2
+
+        # Canopy fraction fc from NDVI
+        fc_raw = (ndvi - C.NDVImin) / (C.NDVImax - C.NDVImin + 1e-6)
+        fc = np.clip(fc_raw, C.fc_min, C.fc_max).astype(np.float32)
+
+        # Displacement / roughness (very simplified functions of LAI)
         hc = 0.15 * lai
-        d = 1.1 * hc * np.log(1 + np.power(0.2 * lai, 0.25))
-        zom = 0.018 * lai
-        
-        # Resistance calculations
-        rac = self.constants.rb / (2 * (lai / fc))
-        
-        # Aerodynamic resistance (initial)
-        u_fri_neu = (0.41 * wind_speed) / np.log((self.constants.z_b_wind - d) / zom)
-        rah_est = (np.log((self.constants.z_b_wind - d) / zom) * 
-                  np.log((self.constants.z_b_air - d) / (0.1 * zom))) / (0.41 * 0.41 * wind_speed)
-        rah = np.clip(rah_est, self.constants.rahlo, self.constants.rahhi)
-        
-        # Surface resistance for soil
-        ras_full = hc * np.exp(2.5) / (0.41 * 0.41 * wind_speed * (hc - d))
-        ras_bare = (np.log(self.constants.z_b_wind / self.constants.Zos) * 
-                   np.log((d + zom) / self.constants.Zos)) / (0.41 * 0.41 * wind_speed)
-        ras = np.where(fc >= self.constants.fc_full_veg, 0, 
-                      np.clip(1 / ((fc / np.maximum(1, ras_full)) + ((1 - fc) / ras_bare)), 1, 5000))
-        
-        air_density = pressure / (1.01 * 0.287 * tair_k)
-        
-        # Initialize soil moisture
-        soil_moisture_current = soil_moisture_prev.copy()
-        soil_root_current = soil_root_prev.copy()
-        
-        # ITERATIVE CONVERGENCE LOOP (reduced to 5 iterations for performance)
-        for iteration in range(5):
-            # === SOIL COMPONENT ===
-            
-            # Soil surface resistance
-            rss = np.clip(3.5 * np.power(self.constants.Theta_sat / np.maximum(0.01, soil_moisture_current), 2.3) + 33.5, 
-                         35, 5000)
-            
-            # Soil temperature
-            ts_eq = ((H_flux_soil_prev * (ras + rah)) / (air_density * self.constants.Cp)) + tair_k
-            ts = np.where(radiation <= 100, tair_k - 2.5, 
-                         np.clip(ts_eq, self.constants.tslo, self.constants.tshi))
-            
-            # Soil evaporation
-            lambda_soil = (2.501 - 0.00236 * (ts - 273.15)) * 1000000
-            eosur = 0.611 * np.exp((17.27 * (ts - 273.15)) / ((ts - 273.15) + 237.3))
-            le_soil_ini = ((eosur - ea) * self.constants.Cp * air_density) / ((rah + rss + ras) * psyc_con)
-            etsoil_sec = np.clip(le_soil_ini / lambda_soil, self.constants.ET_min, 
-                               self.constants.Ref_ET * self.constants.Ref_fac)
-            etsoil_sec_avg = (ETsoil_sec_prev + etsoil_sec) / 2.0
-            
-            # === VEGETATION COMPONENT ===
-            
-            # Canopy temperature
-            tc_eq = ((H_flux_veg_prev * (rac + rah)) / (air_density * self.constants.Cp)) + tair_k
-            tc = np.where(fc <= self.constants.fc_min, ts,
-                         np.where(radiation <= 100, tair_k - 2.5,
-                                 np.clip(tc_eq, self.constants.tslo, self.constants.tshi)))
-            
-            # Stomatal resistance (Jarvis model)
-            eoveg = 0.611 * np.exp((17.27 * (tc - 273.15)) / ((tc - 273.15) + 237.3))
-            vpd = eoveg - ea
-            
-            # Solar radiation factor
-            f = 0.55 * (radiation / self.constants.Rgl) * (2.0 / lai)
-            f1 = (40.0 / self.constants.rl_max + f) / (1.0 + f)
-            
-            # Water stress factor
-            soil_fac = (soil_root_current - theta_wilt) / (theta_ref - theta_wilt)
-            awf = np.clip(soil_fac, 0, 1)
-            f4 = np.log(np.maximum(1, 800 * awf)) / np.log(800)
-            
-            # Temperature factor
-            f2 = 1.0 - 0.0016 * np.power(298.0 - tair_k, 2)
-            
-            # VPD factor
-            f3 = np.clip(1.0 - 0.1914 * vpd, 0.1, 1.0)
-            
-            # Combined stomatal resistance
-            rsc = np.clip(40.0 / ((lai / fc) * f1 * f2 * f4 * f3), 40.0, self.constants.rl_max)
-            
-            # Vegetation transpiration
-            lambda_veg = (2.501 - 0.00236 * (tc - 273.15)) * 1000000
-            etveg_sec = np.clip(((eoveg - ea) * self.constants.Cp * air_density) / 
-                              ((rsc + rac + rah) * psyc_con) / lambda_veg,
-                              self.constants.ET_min, self.constants.Ref_ET * self.constants.Ref_fac)
-            etveg_sec_avg = (ETveg_sec_prev + etveg_sec) / 2.0
-            
-            # === ENERGY BALANCE ===
-            
-            # Latent heat fluxes
-            le_soil = etsoil_sec_avg * lambda_soil
-            le_veg = etveg_sec_avg * lambda_veg
-            
-            # Net radiation
-            outlwr_soil = np.power(ts, 4) * self.constants.Emiss_soil * self.constants.Stefan_Boltzamn
-            outlwr_veg = np.power(tc, 4) * self.constants.BB_Emissi * self.constants.Stefan_Boltzamn
-            
-            netrad_soil = (radiation - self.constants.Albedo_soil * radiation + 
-                          in_long - outlwr_soil - (1 - self.constants.Emiss_soil) * in_long)
-            netrad_veg = (radiation - self.constants.Albedo_veg * radiation + 
-                         in_long - outlwr_veg - (1 - self.constants.Emiss_veg) * in_long)
-            
-            # Sensible heat flux
-            sheat_soil = netrad_soil - G_flux_soil_prev - le_soil
-            sheat_veg = np.clip(netrad_veg - le_veg, self.constants.shlo, self.constants.shhi)
-            
-            # Ground heat flux
-            G_flux_soil_prev = np.maximum(0.4 * sheat_soil, 0.15 * netrad_soil)
-            
-            # Update for next iteration
-            H_flux_soil_prev = (sheat_soil + H_flux_soil_prev) / 2.0
-            H_flux_veg_prev = (sheat_veg + H_flux_veg_prev) / 2.0
+        d  = 1.1 * hc * np.log(1.0 + np.power(0.2 * np.maximum(lai, 1e-6), 0.25))
+        zom = 0.018 * np.maximum(lai, 1e-6)
+
+        # Aerodynamic resistance rah (neutral approx, guarded logs)
+        # Avoid invalid logs / division
+        z_w = np.maximum(C.z_b_wind - d, 0.5)
+        z_a = np.maximum(C.z_b_air - d, 0.2)
+        zom_safe = np.maximum(zom, 1e-4)
+
+        log1 = np.log(np.maximum(z_w / zom_safe, 1.01))
+        log2 = np.log(np.maximum(z_a / (0.1 * zom_safe), 1.01))
+        rah_est = (log1 * log2) / (0.41 * 0.41 * np.maximum(Uz, 0.1))
+        rah = np.clip(rah_est, C.rahlo, C.rahhi).astype(np.float32)
+
+        # Boundary layer & canopy resistances
+        rac = C.rb / (2.0 * np.maximum(lai / np.maximum(fc, 1e-3), 1e-3))
+        # Bare vs. full veg soil aerodynamic resistance term (simplified guards)
+        ras_full = np.clip(hc * np.exp(2.5) / (0.41 * 0.41 * np.maximum(Uz, 0.1) * np.maximum(hc - d, 0.05)), 1.0, C.rl_max)
+        ras_bare = np.clip((np.log(np.maximum(C.z_b_wind / C.Zos, 1.01)) *
+                            np.log(np.maximum((d + zom_safe) / C.Zos, 1.01))) /
+                        (0.41 * 0.41 * np.maximum(Uz, 0.1)), 1.0, C.rl_max)
+        ras = np.where(fc >= C.fc_full_veg, 0.0,
+                    np.clip(1.0 / ((fc / np.maximum(ras_full, 1.0)) +
+                                    ((1.0 - fc) / np.maximum(ras_bare, 1.0))), 1.0, C.rl_max)).astype(np.float32)
+
+        # Soil hydraulic thresholds
+        theta_ref  = soil_fc
+        theta_wilt = np.maximum(0.004, theta_ref - soil_awc)
+        raw = C.MAD * soil_awc
+        thres_mois = theta_ref - raw
+
+        # Initialize iteration state
+        ETsoil_sec_prev = np.full((block_height, block_width), 7.0191862e-005, dtype=np.float32)
+        ETveg_sec_prev  = np.full((block_height, block_width), 5.0890540e-006, dtype=np.float32)
+        H_soil_prev = np.zeros((block_height, block_width), dtype=np.float32)
+        H_veg_prev  = np.zeros((block_height, block_width), dtype=np.float32)
+        G_soil_prev = np.zeros((block_height, block_width), dtype=np.float32)
+
+        sm = sm_prev.copy()
+        rz = rz_prev.copy()
+
+        # Iterative energy balance (5 iters is a good compromise)
+        for _ in range(5):
+            # --- Soil component ---
+            # Soil surface resistance (dryness control)
+            rss = np.clip(3.5 * np.power(C.Theta_sat / np.maximum(sm, 0.01), 2.3) + 33.5, 35.0, C.rl_max)
+
+            # Soil surface temperature (stability feedback via H_soil_prev)
+            Ts_eq = (H_soil_prev * (ras + rah)) / (rho_air * C.Cp) + TairK
+            Ts = np.where(Rsw <= 100.0, TairK - 2.5, np.clip(Ts_eq, C.tslo, C.tshi)).astype(np.float32)
+
+            # Latent heat of vaporization (J/kg)
+            lambda_s = (2.501 - 0.00236 * (Ts - 273.15)) * 1_000_000.0
+            # Saturation at soil surface & aerodynamic VPD (kPa)
+            es_surf = 0.611 * np.exp((17.27 * (Ts - 273.15)) / ((Ts - 273.15) + 237.3))
+            # Penman-Monteith-like (very simplified resistance network)
+            LE_soil_PM = ((es_surf - ea) * C.Cp * rho_air) / (psych * (rah + rss + ras) + 1e-6)
+            etsoil_sec = np.clip(LE_soil_PM / (lambda_s + 1e-6), C.ET_min, C.Ref_ET * C.Ref_fac).astype(np.float32)
+            etsoil_sec_avg = (ETsoil_sec_prev + etsoil_sec) * 0.5
+
+            # --- Vegetation component ---
+            Tc_eq = (H_veg_prev * (rac + rah)) / (rho_air * C.Cp) + TairK
+            Tc = np.where(fc <= C.fc_min, Ts,
+                        np.where(Rsw <= 100.0, TairK - 2.5,
+                                np.clip(Tc_eq, C.tslo, C.tshi))).astype(np.float32)
+
+            lambda_v = (2.501 - 0.00236 * (Tc - 273.15)) * 1_000_000.0
+            es_veg = 0.611 * np.exp((17.27 * (Tc - 273.15)) / ((Tc - 273.15) + 237.3))
+            vpd = np.maximum(es_veg - ea, 0.0)
+
+            # Jarvis-type stomatal resistance factors
+            # Light
+            f_light = (40.0 / C.rl_max + 0.55 * (Rsw / C.Rgl) * (2.0 / np.maximum(lai, 1e-3))) / \
+                    (1.0 + 0.55 * (Rsw / C.Rgl) * (2.0 / np.maximum(lai, 1e-3)))
+            # Temperature
+            f_temp = 1.0 - 0.0016 * np.power(298.0 - TairK, 2)
+            # Water stress (root zone)
+            awf = np.clip((rz - theta_wilt) / np.maximum(theta_ref - theta_wilt, 1e-4), 0.0, 1.0)
+            f_water = np.log(np.maximum(1.0, 800.0 * awf)) / np.log(800.0)
+            # VPD
+            f_vpd = np.clip(1.0 - 0.1914 * vpd, 0.1, 1.0)
+
+            rsc = np.clip(40.0 / (np.maximum(lai / np.maximum(fc, 1e-3), 1e-3) *
+                                np.maximum(f_light, 1e-3) *
+                                np.maximum(f_temp, 1e-3) *
+                                np.maximum(f_water, 1e-3) *
+                                np.maximum(f_vpd, 1e-3)),
+                        40.0, C.rl_max).astype(np.float32)
+
+            LE_veg_PM = ((es_veg - ea) * C.Cp * rho_air) / (psych * (rsc + rac + rah) + 1e-6)
+            etveg_sec = np.clip(LE_veg_PM / (lambda_v + 1e-6), C.ET_min, C.Ref_ET * C.Ref_fac).astype(np.float32)
+            etveg_sec_avg = (ETveg_sec_prev + etveg_sec) * 0.5
+
+            # --- Radiation / flux partitioning ---
+            # Outgoing LW
+            Rlw_out_soil = (Ts ** 4) * C.Emiss_soil * C.Stefan_Boltzamn
+            Rlw_out_veg  = (Tc ** 4) * C.BB_Emissi  * C.Stefan_Boltzamn
+            # Net radiation (soil & veg)
+            Rn_soil = (Rsw * (1.0 - C.Albedo_soil) + Rlw_in - Rlw_out_soil -
+                    (1.0 - C.Emiss_soil) * Rlw_in)
+            Rn_veg  = (Rsw * (1.0 - C.Albedo_veg)  + Rlw_in - Rlw_out_veg  -
+                    (1.0 - C.Emiss_veg)  * Rlw_in)
+
+            # Latent heat fluxes from ET
+            LE_soil = etsoil_sec_avg * lambda_s
+            LE_veg  = etveg_sec_avg  * lambda_v
+
+            # Ground heat flux fraction (day/night simple rule)
+            G_frac_soil = np.where(Rsw > 100.0, 0.15, 0.05)
+            G_soil = G_frac_soil * Rn_soil
+
+            # Sensible heat = Rn - G - LE
+            H_soil = np.clip(Rn_soil - G_soil - LE_soil, C.shlo, C.shhi)
+            H_veg  = np.clip(Rn_veg  - LE_veg,           C.shlo, C.shhi)
+
+            # Smooth updates
+            G_soil_prev = 0.5 * (G_soil_prev + G_soil)
+            H_soil_prev = 0.5 * (H_soil_prev + H_soil)
+            H_veg_prev  = 0.5 * (H_veg_prev  + H_veg)
             ETsoil_sec_prev = etsoil_sec_avg
-            ETveg_sec_prev = etveg_sec_avg
-        
-        # === FINAL CALCULATIONS ===
-        
-        # Hourly ET components
-        etsoil_hour = (1.0 - fc) * 3600.0 * etsoil_sec_avg
-        etveg_hour = etveg_sec_avg * 3600.0 * fc
-        et_total_hour = etsoil_hour + etveg_hour
-        
-        # Soil moisture update
-        soil_moisture_new = soil_moisture_prev - ((etsoil_sec_avg * 3600 * (1 - fc)) - precipitation) / (self.constants.soil_depth * 1000)
-        soil_moisture_new = np.clip(soil_moisture_new, 0.01, theta_ref)
-        
-        soil_root_new = soil_root_prev + ((precipitation - etsoil_sec_avg * 3600 * (1 - fc) - etveg_sec_avg * 3600 * fc) / 
-                                        (self.constants.droot * 1000))
-        soil_root_new = np.clip(soil_root_new, 0.01, theta_ref)
-        
-        # Irrigation (simplified)
-        irrigation = np.where((soil_root_new < thres_mois) & (nlcd > 80) & (nlcd < 83), 
-                            0.04 * self.constants.droot * 1000, 0.0)
-        soil_root_new = np.where(irrigation > 0, soil_root_new + 0.04, soil_root_new)
-        
+            ETveg_sec_prev  = etveg_sec_avg
+
+            # Update soil moisture states (simple bucket)
+            # Convert ET (m/s) → mm/hour using *3600; divide by depths (mm) to get fraction
+            etsoil_h_mm = etsoil_sec_avg * 3600.0 * (1.0 - fc)  # mm/h on soil portion
+            etveg_h_mm  = etveg_sec_avg  * 3600.0 * fc          # mm/h on canopy portion
+
+            # Surface layer: depletion by soil evaporation (no infiltration routing here; precip to root below)
+            sm = np.clip(sm - (etsoil_h_mm / (C.soil_depth)), 0.01, theta_ref)
+
+            # Root zone: add precip (mm/h) minus total ET (mm/h) over both components
+            rz = np.clip(rz + ((precip_hour - (etsoil_h_mm + etveg_h_mm)) / C.droot),
+                        0.01, theta_ref)
+
+            # Simple irrigation trigger on cropland (NLCD ~ 81–82)
+            irrig = np.where((rz < thres_mois) & (nlcd >= 81) & (nlcd <= 82),
+                            0.04 * C.droot, 0.0).astype(np.float32)  # mm/h
+            rz = np.where(irrig > 0, np.clip(rz + 0.04, 0.01, theta_ref), rz)
+
+        # Final hourly ET components (mm/hour)
+        etsoil_hour = etsoil_sec_avg * 3600.0 * (1.0 - fc)
+        etveg_hour  = etveg_sec_avg  * 3600.0 * fc
+        et_total_hour = np.clip(etsoil_hour + etveg_hour, 0.0, 50.0).astype(np.float32)
+
+        # Guard NaNs/Infs
+        def _finite(a, fill=0.0):
+            a = np.where(np.isfinite(a), a, fill).astype(np.float32)
+            return a
+
         return {
-            'et_hour': et_total_hour,
-            'soil_surface': soil_moisture_new,
-            'soil_root': soil_root_new,
-            'irrigation': irrigation,
-            'precip_hour': precipitation,
-            'etsoil_hour': etsoil_hour,
-            'etveg_hour': etveg_hour,
-            'fc': fc
+            'et_hour':     _finite(et_total_hour),
+            'soil_surface': _finite(sm),
+            'soil_root':    _finite(rz),
+            'irrigation':   _finite(irrig),
+            'precip_hour':  _finite(precip_hour),
+            'etsoil_hour':  _finite(etsoil_hour),
+            'etveg_hour':   _finite(etveg_hour),
+            'fc':           _finite(fc),
         }
+
 
     def _get_default_results(self, block_height: int, block_width: int) -> Dict[str, np.ndarray]:
         """Return default results for failed calculations"""

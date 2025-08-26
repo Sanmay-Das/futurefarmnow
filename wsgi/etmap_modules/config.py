@@ -77,10 +77,10 @@ class ETMapConfig:
     
     # Band ordering for hourly files
     BAND_ORDER = {
-        'static': ['soil_awc', 'soil_fc', 'elevation', 'nlcd'],
-        'prism': ['precipitation'],
-        'landsat': ['ndvi', 'lai'],
-        'nldas': ['temp', 'humidity', 'wind_speed', 'radiation']
+    'static': ['soil_awc', 'soil_fc', 'nlcd', 'elevation'],  # <- swap nlcd/elevation
+    'prism': ['precipitation'],
+    'nldas': ['temperature', 'humidity', 'wind_speed', 'radiation'],  # <- rename temp
+    'landsat': ['ndvi', 'lai']
     }
     
     # GeoTIFF output profile defaults
