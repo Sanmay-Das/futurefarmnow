@@ -7,6 +7,7 @@ from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from shapely.geometry import shape
 from .config import ETMapConfig
+import glob
 from .utils import DatabaseManager, FileManager, GeospatialUtils, LoggingUtils
 import argparse
 import sys
@@ -149,7 +150,6 @@ class CompleteETMapProcessor:
         FileManager.ensure_directory_exists(hourly_output_dir)
 
         static_data = self.static_processor.load_aligned_static_data(output_base_path)
-        landsat_data = self.landsat_processor.load_aligned_landsat_data(output_base_path)
 
         date_from = datetime.strptime(request_data['date_from'], '%Y-%m-%d')
         date_to = datetime.strptime(request_data['date_to'], '%Y-%m-%d')
@@ -157,11 +157,31 @@ class CompleteETMapProcessor:
         current_date = date_from
         total_hours_processed = 0
 
+        # Landsat output folder we’ll refresh per day to avoid cross-day reuse
+        landsat_output_dir = ETMapConfig.get_output_path(os.path.basename(output_base_path), 'landsat')
+        FileManager.ensure_directory_exists(landsat_output_dir)
+
         while current_date <= date_to:
             print(f"\n--- Processing Date: {current_date.strftime('%Y-%m-%d')} ---")
 
+            # 🔄 Ensure Landsat (NDVI/LAI) corresponds to *this* date
+            # Clean previous aligned Landsat outputs (avoid stale NDVI from another day)
+            for fp in glob.glob(os.path.join(landsat_output_dir, "*.tif")):
+                try:
+                    os.remove(fp)
+                except Exception:
+                    pass
+
+            # Build aligned Landsat for the exact date (uses date-aware LandsatProcessor)
+            self.landsat_processor.process_landsat_data(
+                aoi_metadata, output_base_path, target_date=current_date
+            )
+            landsat_data = self.landsat_processor.load_aligned_landsat_data(output_base_path)
+
+            # PRISM for this day (ppt already converted to mm/hr by the loader)
             prism_data = self.prism_processor.load_aligned_prism_data(output_base_path, current_date)
 
+            # NLDAS hourly files (aligned per hour)
             hourly_files = self.nldas_processor.find_nldas_hourly_files(current_date)
             if not hourly_files:
                 LoggingUtils.print_warning(f"No NLDAS hourly data found for {current_date.strftime('%Y-%m-%d')}")
@@ -170,7 +190,6 @@ class CompleteETMapProcessor:
             for hour, nldas_file_path in hourly_files:
                 print(f"Processing Hour {hour:02d}")
 
-                # ✅ NEW: true reprojection to AOI grid (Scala/GeoTrellis parity)
                 nldas_data = None
                 if nldas_file_path:
                     nldas_data = self.nldas_processor.align_nldas_file_to_grid(

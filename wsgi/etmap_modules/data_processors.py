@@ -190,39 +190,100 @@ class NLDASProcessor:
 class LandsatProcessor:
     """
     Process Landsat data (B4, B5) and calculate NDVI/LAI
+    Date-aware: if target_date is provided, only process files for that exact date (YYYY-MM-DD),
+    pairing B4/B5 by scene_id so bands come from the same acquisition.
     """
 
     def __init__(self, grid_manager: UnifiedGridManager):
         self.grid_manager = grid_manager
 
-    def process_landsat_data(self, aoi_metadata: Dict, output_base_path: str):
+    # ------------------------- helpers -------------------------
+    @staticmethod
+    def _scene_id_from_filename(path: str) -> str:
+        """
+        From B4_LC09_L2SP_..._2024-04-03.tif → return scene_id "LC09_L2SP_...".
+        Robust to extra underscores inside the scene id.
+        """
+        base = os.path.basename(path)
+        stem = os.path.splitext(base)[0]  # e.g., B4_LC09_L2SP_..._2024-04-03
+        parts = stem.split('_')
+        # band |  scene_id (1..-2)  | date
+        return '_'.join(parts[1:-1]) if len(parts) > 2 else (parts[1] if len(parts) > 1 else "")
+
+    def _list_pairs_for_date(self, date_str: str) -> List[Tuple[str, str]]:
+        """
+        Return list of (b4_path, b5_path) for the exact date (YYYY-MM-DD),
+        pairing by scene_id. If none found, returns [].
+        """
+        b4_candidates = glob.glob(os.path.join(ETMapConfig.LANDSAT_B4_DIR, f"B4_*_{date_str}.tif"))
+        b5_candidates = glob.glob(os.path.join(ETMapConfig.LANDSAT_B5_DIR, f"B5_*_{date_str}.tif"))
+
+        b4_map = { self._scene_id_from_filename(p): p for p in b4_candidates }
+        b5_map = { self._scene_id_from_filename(p): p for p in b5_candidates }
+        common = sorted([sid for sid in b4_map if sid in b5_map])
+
+        return [(b4_map[sid], b5_map[sid]) for sid in common]
+
+    # --------------------------- main --------------------------
+    def process_landsat_data(self,
+                             aoi_metadata: Dict,
+                             output_base_path: str,
+                             target_date: Optional[datetime] = None,
+                             prefer_scene_id: Optional[str] = None):
+        """
+        If target_date is provided, only process B4/B5 pairs for that exact date (YYYY-MM-DD).
+        Otherwise, fall back to previous behavior (process first N matched pairs).
+        """
         LoggingUtils.print_step_header("Processing Landsat Data")
-
-        b4_files = sorted(glob.glob(os.path.join(ETMapConfig.LANDSAT_B4_DIR, "*.tif")))
-        b5_files = sorted(glob.glob(os.path.join(ETMapConfig.LANDSAT_B5_DIR, "*.tif")))
-
-        print(f"Found {len(b4_files)} B4 files and {len(b5_files)} B5 files")
-
-        if len(b4_files) == 0 or len(b5_files) == 0:
-            LoggingUtils.print_warning("No Landsat files found")
-            return
 
         landsat_output = ETMapConfig.get_output_path(os.path.basename(output_base_path), 'landsat')
         FileManager.ensure_directory_exists(landsat_output)
 
+        pairs: List[Tuple[str, str]] = []
+
+        if target_date is not None:
+            date_str = target_date.strftime("%Y-%m-%d")
+            pairs = self._list_pairs_for_date(date_str)
+
+            if prefer_scene_id:
+                pairs = [(b4, b5) for (b4, b5) in pairs
+                         if self._scene_id_from_filename(b4) == prefer_scene_id]
+
+            if not pairs:
+                LoggingUtils.print_warning(f"No Landsat B4/B5 pairs found for date {date_str}")
+                return
+            print(f"Found {len(pairs)} Landsat B4/B5 pairs for {date_str}")
+        else:
+            # Backward-compatible fallback: pair by scene_id with no date filter
+            b4_files = sorted(glob.glob(os.path.join(ETMapConfig.LANDSAT_B4_DIR, "*.tif")))
+            b5_files = sorted(glob.glob(os.path.join(ETMapConfig.LANDSAT_B5_DIR, "*.tif")))
+            print(f"Found {len(b4_files)} B4 files and {len(b5_files)} B5 files")
+
+            if not b4_files or not b5_files:
+                LoggingUtils.print_warning("No Landsat files found")
+                return
+
+            b4_map = { self._scene_id_from_filename(p): p for p in b4_files }
+            b5_map = { self._scene_id_from_filename(p): p for p in b5_files }
+            common = sorted([sid for sid in b4_map if sid in b5_map])
+            pairs = [(b4_map[sid], b5_map[sid]) for sid in common]
+            if not pairs:
+                LoggingUtils.print_warning("No matching B4/B5 scene pairs found")
+                return
+            print(f"Found {len(pairs)} Landsat B4/B5 pairs (no date filter)")
+
+        # Respect MAX_LANDSAT_SCENES
+        max_pairs = min(len(pairs), ETMapConfig.MAX_LANDSAT_SCENES)
         processed_count = 0
-        min_files = min(len(b4_files), len(b5_files))
 
-        for i in range(min(min_files, ETMapConfig.MAX_LANDSAT_SCENES)):
-            b4_file = b4_files[i]
-            b5_file = b5_files[i]
-
-            print(f"Processing Landsat scene {i+1}: {os.path.basename(b4_file)}")
+        for i, (b4_file, b5_file) in enumerate(pairs[:max_pairs]):
+            print(f"Processing Landsat scene {i+1}: "
+                  f"{os.path.basename(b4_file)}  &  {os.path.basename(b5_file)}")
 
             b4_aligned = os.path.join(landsat_output, f"landsat_b4_{i:03d}_aligned.tif")
             b5_aligned = os.path.join(landsat_output, f"landsat_b5_{i:03d}_aligned.tif")
 
-            # Reflectance is continuous -> bilinear is typically better for NDVI
+            # Reflectance is continuous → bilinear is typically better for NDVI
             b4_success = self.grid_manager.align_raster_to_grid(b4_file, b4_aligned, aoi_metadata, Resampling.bilinear)
             b5_success = self.grid_manager.align_raster_to_grid(b5_file, b5_aligned, aoi_metadata, Resampling.bilinear)
 
@@ -254,7 +315,7 @@ class LandsatProcessor:
                     dst.write(ndvi, 1)
 
                 valid_pixels = int(np.sum(ndvi != -9999.0))
-                LoggingUtils.print_success(f"NDVI calculated: {valid_pixels} valid pixels")
+                LoggingUtils.print_success(f"NDVI calculated: {valid_pixels}")
 
         except Exception as e:
             LoggingUtils.print_error(f"Error calculating NDVI: {e}")
