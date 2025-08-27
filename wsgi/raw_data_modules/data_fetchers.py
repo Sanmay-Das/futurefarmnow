@@ -33,126 +33,147 @@ class BaseFetcher(ABC):
 
 class LandsatFetcher(BaseFetcher):
     """
-    Fetch raw Landsat data (Bands 4 and 5)
+    Fetch raw Landsat data (Bands 4 and 5), full scenes (no clipping).
+    Server-only nearest-date search:
+      • Try exact date on server and download ALL intersecting scenes.
+      • If exact date has no scenes, search ±N days on the server (tie → newer) and
+        download ALL intersecting scenes for the chosen nearest date.
     """
-    
-    def fetch_data(self, date_from: str, date_to: str, geometry_json: str = None) -> bool:
-        """
-        Collect raw Landsat Band 4 (Red) and Band 5 (NIR) data
-        NO CLIPPING - Downloads full scenes that intersect AOI
 
-        ✓ DATE-AWARE: For each requested day, if we already have at least one B4 and one B5
-          file for that exact date (any scene), we skip querying/downloading for that date.
-        """
+    def fetch_data(self, date_from: str, date_to: str, geometry_json: str = None) -> bool:
         try:
             print("Fetching raw Landsat data (full scenes, no clipping)...")
             RawDataConfig.ensure_directories()
-            
-            # Parse AOI if provided
-            area_of_interest = None
+
+            # AOI (optional server-side intersects)
+            aoi_geom = None
             if geometry_json:
                 try:
-                    area_of_interest = shape(json.loads(geometry_json))
+                    aoi_geom = shape(json.loads(geometry_json))
                 except Exception as e:
-                    print(f"Warning: Could not parse geometry, searching globally: {e}")
-            
+                    print(f"Warning: Could not parse geometry; searching without AOI filter: {e}")
+
             catalog = Client.open(
                 "https://planetarycomputer.microsoft.com/api/stac/v1",
                 modifier=planetary_computer.sign_inplace
             )
 
-            # Iterate day-by-day so we can do date-aware caching
+            nearest_window = getattr(RawDataConfig, "LANDSAT_NEAREST_DAY_WINDOW", 45)
             start = datetime.fromisoformat(date_from).date()
             end = datetime.fromisoformat(date_to).date()
             cur = start
 
             while cur <= end:
-                date_string = cur.isoformat()
+                date_str = cur.isoformat()
 
-                # ✅ DATE CHECK: skip this day entirely if already cached (at least one B4 and one B5 for this date)
-                if self._has_cached_pair_for_date(date_string):
-                    print(f"✓ {date_string}: already have B4/B5 for this date — skipping STAC search/download.")
-                    cur += timedelta(days=1)
-                    continue
+                # 1) Exact date on server → download ALL intersecting scenes
+                items = self._search_server_for_date(catalog, date_str, aoi_geom)
+                print(f"{date_str}: Found {len(items)} Landsat scenes on server")
 
-                # Exact 1-day window search
-                time_window = f"{date_string}T00:00:00Z/{date_string}T23:59:59Z"
-                search_params = {
-                    "collections": [RawDataConfig.LANDSAT_COLLECTION],
-                    "datetime": time_window,
-                    "limit": RawDataConfig.MAX_LANDSAT_SCENES
-                }
-                if area_of_interest:
-                    search_params["intersects"] = mapping(area_of_interest)
-                
-                search_results = catalog.search(**search_params)
-                # item_collection() can be empty; use get_items() for generator safety
-                items = list(search_results.get_items()) or list(search_results.item_collection())
-                print(f"{date_string}: Found {len(items)} Landsat scenes")
-
-                for item in items:
-                    scene_id = item.id
-                    # Use the item datetime to name the files (should equal date_string)
-                    item_date_string = item.datetime.date().isoformat()
-
-                    # Download Band 4 (Red)
-                    if 'red' in item.assets:
-                        self._download_band(item, 'red', 'B4', scene_id, item_date_string, RawDataConfig.LANDSAT_B4_DIR)
-                    
-                    # Download Band 5 (NIR)
-                    if 'nir08' in item.assets:
-                        self._download_band(item, 'nir08', 'B5', scene_id, item_date_string, RawDataConfig.LANDSAT_B5_DIR)
-
-                    # If we now have a cached pair for this date from any scene, we could stop early
-                    if self._has_cached_pair_for_date(date_string):
-                        print(f"  ✓ {date_string}: acquired at least one B4/B5 pair — stopping further downloads for this date.")
-                        break
+                if items:
+                    self._download_all_from_items(items, date_str)
+                else:
+                    # 2) Nearest-date on server (±window, tie → newer) → download ALL for that date
+                    used_date = self._fetch_nearest_on_server(
+                        catalog=catalog,
+                        target_date=cur,
+                        area_of_interest=aoi_geom,
+                        window_days=nearest_window
+                    )
+                    if used_date:
+                        print(f"   ℹ️ Using nearest server date {used_date} for requested {date_str}")
+                    else:
+                        print(f"   ✗ No server scenes within ±{nearest_window} days of {date_str}")
 
                 cur += timedelta(days=1)
-            
-            print(f"✓ Landsat data collection completed")
+
+            print("✓ Landsat data collection completed")
             return True
-            
+
         except Exception as e:
             print(f"✗ Error in Landsat collection: {e}")
             return False
 
-    def _has_cached_pair_for_date(self, date_string: str) -> bool:
+    # ---------- helpers (server search & download) ----------
+    def _search_server_for_date(self, catalog, date_string: str, aoi_geom) -> list:
+        """Query the server for a single day window, optionally constrained by AOI."""
+        time_window = f"{date_string}T00:00:00Z/{date_string}T23:59:59Z"
+        params = {
+            "collections": [RawDataConfig.LANDSAT_COLLECTION],
+            "datetime": time_window,
+            "limit": RawDataConfig.MAX_LANDSAT_SCENES
+        }
+        if aoi_geom is not None:
+            params["intersects"] = mapping(aoi_geom)
+
+        search = catalog.search(**params)
+        items = list(search.get_items()) or list(search.item_collection())
+        return items
+
+    def _download_all_from_items(self, items: list, label_date_str: str) -> None:
         """
-        Return True if there is at least one B4_*_{date}.tif and one B5_*_{date}.tif locally.
+        Download B4/B5 for every item in 'items' (no early stop).
+        Skips files that already exist by filename.
         """
-        b4 = glob.glob(os.path.join(RawDataConfig.LANDSAT_B4_DIR, f"B4_*_{date_string}.tif"))
-        b5 = glob.glob(os.path.join(RawDataConfig.LANDSAT_B5_DIR, f"B5_*_{date_string}.tif"))
-        return bool(b4 and b5)
-    
+        for item in items:
+            scene_id = item.id
+            item_date_string = item.datetime.date().isoformat()
+
+            if 'red' in item.assets:
+                self._download_band(item, 'red', 'B4', scene_id, item_date_string, RawDataConfig.LANDSAT_B4_DIR)
+            if 'nir08' in item.assets:
+                self._download_band(item, 'nir08', 'B5', scene_id, item_date_string, RawDataConfig.LANDSAT_B5_DIR)
+
+    def _fetch_nearest_on_server(self, catalog, target_date, area_of_interest, window_days: int) -> Optional[str]:
+        """
+        Search server ±window_days for nearest date with scenes.
+        Order: +1, -1, +2, -2, ... (tie → newer).
+        When found, download ALL intersecting scenes for that date. Return the used date.
+        """
+        # Favor newer in a tie by checking +d before -d
+        for d in range(1, window_days + 1):
+            # +d (newer)
+            plus_date = (target_date + timedelta(days=d)).isoformat()
+            items = self._search_server_for_date(catalog, plus_date, area_of_interest)
+            if items:
+                print(f"   ✅ Nearest server date chosen: {plus_date} (offset +{d} days)")
+                self._download_all_from_items(items, plus_date)
+                return plus_date
+
+            # -d (older)
+            minus_date = (target_date - timedelta(days=d)).isoformat()
+            items = self._search_server_for_date(catalog, minus_date, area_of_interest)
+            if items:
+                print(f"   ✅ Nearest server date chosen: {minus_date} (offset -{d} days)")
+                self._download_all_from_items(items, minus_date)
+                return minus_date
+
+        return None
+
+    # ---------- existing local helpers ----------
     def _download_band(self, item, asset_key: str, band_name: str, scene_id: str, date_string: str, output_dir: str):
-        """Download individual band (STRICT date-aware filename)"""
+        """Download individual band (STRICT date-aware filename)."""
         try:
             os.makedirs(output_dir, exist_ok=True)
             filename = f"{band_name}_{scene_id}_{date_string}.tif"
             output_path = os.path.join(output_dir, filename)
-            
-            # ✅ Strict date+scene skip
+
             if os.path.exists(output_path):
                 print(f"  ⚠ {filename} already exists, skipping")
                 return
-            
-            asset_href = planetary_computer.sign_url(item.assets[asset_key].href)
 
-            # Download full scene without any clipping
+            asset_href = planetary_computer.sign_url(item.assets[asset_key].href)
             with rasterio.open(asset_href) as src:
                 full_data = src.read()
                 profile = src.profile.copy()
-                
+
                 tmp_path = output_path + ".part"
                 with rasterio.open(tmp_path, 'w', **profile) as dst:
                     dst.write(full_data)
                 os.replace(tmp_path, output_path)
 
-                # Keep the print within the 'src' context so we can safely access props
                 print(f"  ✓ Saved raw {band_name} (full scene): {filename}")
                 print(f"    Shape: {src.width} x {src.height}, CRS: {src.crs}")
-            
         except Exception as e:
             print(f"  ✗ Error downloading {band_name} for {scene_id}: {e}")
 

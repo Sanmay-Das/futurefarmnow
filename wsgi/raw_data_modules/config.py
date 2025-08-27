@@ -16,7 +16,7 @@ class RawDataConfig:
     LANDSAT_B4_DIR = os.path.join(BASE_OUTPUT_DIR, 'Landsat_B4')
     LANDSAT_B5_DIR = os.path.join(BASE_OUTPUT_DIR, 'Landsat_B5')
     PRISM_DIR = os.path.join(BASE_OUTPUT_DIR, 'Prism_Daily')
-    NLDAS_DIR = os.path.join(BASE_OUTPUT_DIR, 'NLDAS_2024_GeoTiff')  # Year will be dynamic
+    NLDAS_DIR = os.path.join(BASE_OUTPUT_DIR, 'NLDAS_GeoTiff')  # Year will be dynamic
     
     # Fetching settings
     MAX_LANDSAT_SCENES = 50

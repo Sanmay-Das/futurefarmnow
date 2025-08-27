@@ -477,9 +477,9 @@ class ETAlgorithm:
 
         except Exception as e:
             print(f"    💥 Error creating final summary: {e}")
-
+            
     def _create_et_visualization(self, et_data: np.ndarray, output_dir: str, bounds=None):
-        """Create PNG visualization with correct geographic extent and aspect."""
+        """Create PNG visualization without axis ticks/labels (no lon/lat shown)."""
         import matplotlib.pyplot as plt
 
         et_masked = np.ma.masked_where(et_data == -9999, et_data)
@@ -494,11 +494,11 @@ class ETAlgorithm:
             extent = [0, w, 0, h]
             aspect = 'equal'
 
-        plt.figure(figsize=(10, 7))
+        fig, ax = plt.subplots(figsize=(10, 7))
         cmap = plt.cm.viridis
         cmap.set_bad(alpha=0.0)
 
-        im = plt.imshow(
+        im = ax.imshow(
             et_masked,
             cmap=cmap,
             interpolation='nearest',
@@ -506,16 +506,26 @@ class ETAlgorithm:
             origin='upper',
             aspect=aspect,
         )
-        plt.colorbar(im, label='ET (mm/day)', shrink=0.8)
-        plt.title('BAITSSS Evapotranspiration Map', fontsize=13, weight='bold')
-        plt.xlabel('Longitude' if bounds is not None else '')
-        plt.ylabel('Latitude' if bounds is not None else '')
-        plt.grid(True, linewidth=0.3, alpha=0.3)
+
+        # Title only; no lon/lat axes
+        ax.set_title('BAITSSS Evapotranspiration Map', fontsize=13, weight='bold')
+
+        # Remove axis labels, ticks, and spines so no lon/lat text shows
+        ax.set_xlabel('')
+        ax.set_ylabel('')
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.grid(False)
+
+        cbar = fig.colorbar(im, ax=ax, label='ET (mm/day)', shrink=0.8)
 
         png_path = os.path.join(output_dir, "ET_final_result.png")
-        plt.savefig(png_path, dpi=220, bbox_inches='tight', facecolor='white')
-        plt.close()
+        fig.savefig(png_path, dpi=220, bbox_inches='tight', facecolor='white')
+        plt.close(fig)
         print(f"    🖼️  ET visualization created: {png_path}")
+
 
     def _create_json_summary(self, output_dir: str, enhanced_files: List[str]):
         """Create comprehensive JSON summary"""

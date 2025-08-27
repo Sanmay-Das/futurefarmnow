@@ -24,7 +24,7 @@ class ETMapConfig:
     LANDSAT_B4_DIR = os.path.join(DATA_BASE_PATH, 'Landsat_B4')
     LANDSAT_B5_DIR = os.path.join(DATA_BASE_PATH, 'Landsat_B5')
     PRISM_DIR = os.path.join(DATA_BASE_PATH, 'Prism_Daily')
-    NLDAS_DIR = os.path.join(DATA_BASE_PATH, 'NLDAS_2024_GeoTiff')
+    NLDAS_DIR = os.path.join(DATA_BASE_PATH, 'NLDAS_GeoTiff')
     
     # Static data paths
     STATIC_DATA_PATHS = {

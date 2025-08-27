@@ -10,7 +10,7 @@ import numpy as np
 import rasterio
 from rasterio.warp import Resampling, reproject
 from typing import Dict, List, Tuple, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 
 from .config import ETMapConfig
@@ -189,72 +189,97 @@ class NLDASProcessor:
 
 class LandsatProcessor:
     """
-    Process Landsat data (B4, B5) and calculate NDVI/LAI
-    Date-aware: if target_date is provided, only process files for that exact date (YYYY-MM-DD),
-    pairing B4/B5 by scene_id so bands come from the same acquisition.
+    Process Landsat data (B4, B5) and calculate NDVI/LAI.
+
+    With target_date:
+      - Prefer exact date from local cache.
+      - If missing locally (because the fetcher chose a nearby date), fall back to the nearest
+        *local* date within ±LANDSAT_NEAREST_DAY_WINDOW (tie → newer). No server calls.
+
+    Without target_date:
+      - Pair whatever is available locally (legacy behavior).
     """
 
     def __init__(self, grid_manager: UnifiedGridManager):
         self.grid_manager = grid_manager
+        self.nearest_day_window = getattr(ETMapConfig, "LANDSAT_NEAREST_DAY_WINDOW", 45)
 
     # ------------------------- helpers -------------------------
     @staticmethod
     def _scene_id_from_filename(path: str) -> str:
-        """
-        From B4_LC09_L2SP_..._2024-04-03.tif → return scene_id "LC09_L2SP_...".
-        Robust to extra underscores inside the scene id.
-        """
         base = os.path.basename(path)
-        stem = os.path.splitext(base)[0]  # e.g., B4_LC09_L2SP_..._2024-04-03
+        stem = os.path.splitext(base)[0]
         parts = stem.split('_')
-        # band |  scene_id (1..-2)  | date
         return '_'.join(parts[1:-1]) if len(parts) > 2 else (parts[1] if len(parts) > 1 else "")
 
     def _list_pairs_for_date(self, date_str: str) -> List[Tuple[str, str]]:
-        """
-        Return list of (b4_path, b5_path) for the exact date (YYYY-MM-DD),
-        pairing by scene_id. If none found, returns [].
-        """
         b4_candidates = glob.glob(os.path.join(ETMapConfig.LANDSAT_B4_DIR, f"B4_*_{date_str}.tif"))
         b5_candidates = glob.glob(os.path.join(ETMapConfig.LANDSAT_B5_DIR, f"B5_*_{date_str}.tif"))
 
-        b4_map = { self._scene_id_from_filename(p): p for p in b4_candidates }
-        b5_map = { self._scene_id_from_filename(p): p for p in b5_candidates }
+        b4_map = {self._scene_id_from_filename(p): p for p in b4_candidates}
+        b5_map = {self._scene_id_from_filename(p): p for p in b5_candidates}
         common = sorted([sid for sid in b4_map if sid in b5_map])
-
         return [(b4_map[sid], b5_map[sid]) for sid in common]
 
+    def _find_nearest_local_pairs(self, target_date: datetime) -> Tuple[Optional[str], List[Tuple[str, str]]]:
+        """
+        No server calls. Find nearest *local* date with at least one B4/B5 pair.
+        Order: 0, +1, -1, +2, -2, ... (tie → newer).
+        """
+        center = target_date.strftime("%Y-%m-%d")
+        pairs = self._list_pairs_for_date(center)
+        if pairs:
+            return center, pairs
+
+        for d in range(1, self.nearest_day_window + 1):
+            plus_date = (target_date + timedelta(days=d)).strftime("%Y-%m-%d")
+            pairs = self._list_pairs_for_date(plus_date)
+            if pairs:
+                return plus_date, pairs
+
+            minus_date = (target_date - timedelta(days=d)).strftime("%Y-%m-%d")
+            pairs = self._list_pairs_for_date(minus_date)
+            if pairs:
+                return minus_date, pairs
+
+        return None, []
+
     # --------------------------- main --------------------------
-    def process_landsat_data(self,
-                             aoi_metadata: Dict,
-                             output_base_path: str,
-                             target_date: Optional[datetime] = None,
-                             prefer_scene_id: Optional[str] = None):
-        """
-        If target_date is provided, only process B4/B5 pairs for that exact date (YYYY-MM-DD).
-        Otherwise, fall back to previous behavior (process first N matched pairs).
-        """
+    def process_landsat_data(
+        self,
+        aoi_metadata: Dict,
+        output_base_path: str,
+        target_date: Optional[datetime] = None,
+        prefer_scene_id: Optional[str] = None
+    ):
         LoggingUtils.print_step_header("Processing Landsat Data")
 
         landsat_output = ETMapConfig.get_output_path(os.path.basename(output_base_path), 'landsat')
         FileManager.ensure_directory_exists(landsat_output)
 
         pairs: List[Tuple[str, str]] = []
+        used_date_str: Optional[str] = None
 
         if target_date is not None:
-            date_str = target_date.strftime("%Y-%m-%d")
-            pairs = self._list_pairs_for_date(date_str)
+            used_date_str, pairs = self._find_nearest_local_pairs(target_date)
 
             if prefer_scene_id:
                 pairs = [(b4, b5) for (b4, b5) in pairs
                          if self._scene_id_from_filename(b4) == prefer_scene_id]
 
             if not pairs:
-                LoggingUtils.print_warning(f"No Landsat B4/B5 pairs found for date {date_str}")
+                LoggingUtils.print_warning(
+                    f"No local Landsat B4/B5 pairs within ±{self.nearest_day_window} days of "
+                    f"{target_date.strftime('%Y-%m-%d')} — did the fetcher run?"
+                )
                 return
-            print(f"Found {len(pairs)} Landsat B4/B5 pairs for {date_str}")
+
+            print(f"Found {len(pairs)} Landsat B4/B5 pairs for {used_date_str}")
+            if used_date_str != target_date.strftime("%Y-%m-%d"):
+                print(f"   ℹ️ Using nearest local date {used_date_str} (requested {target_date.strftime('%Y-%m-%d')})")
+
         else:
-            # Backward-compatible fallback: pair by scene_id with no date filter
+            # Legacy: pair everything available locally (no date filter)
             b4_files = sorted(glob.glob(os.path.join(ETMapConfig.LANDSAT_B4_DIR, "*.tif")))
             b5_files = sorted(glob.glob(os.path.join(ETMapConfig.LANDSAT_B5_DIR, "*.tif")))
             print(f"Found {len(b4_files)} B4 files and {len(b5_files)} B5 files")
@@ -263,8 +288,8 @@ class LandsatProcessor:
                 LoggingUtils.print_warning("No Landsat files found")
                 return
 
-            b4_map = { self._scene_id_from_filename(p): p for p in b4_files }
-            b5_map = { self._scene_id_from_filename(p): p for p in b5_files }
+            b4_map = {self._scene_id_from_filename(p): p for p in b4_files}
+            b5_map = {self._scene_id_from_filename(p): p for p in b5_files}
             common = sorted([sid for sid in b4_map if sid in b5_map])
             pairs = [(b4_map[sid], b5_map[sid]) for sid in common]
             if not pairs:
@@ -272,7 +297,7 @@ class LandsatProcessor:
                 return
             print(f"Found {len(pairs)} Landsat B4/B5 pairs (no date filter)")
 
-        # Respect MAX_LANDSAT_SCENES
+        # Cap number of scenes
         max_pairs = min(len(pairs), ETMapConfig.MAX_LANDSAT_SCENES)
         processed_count = 0
 
@@ -283,11 +308,11 @@ class LandsatProcessor:
             b4_aligned = os.path.join(landsat_output, f"landsat_b4_{i:03d}_aligned.tif")
             b5_aligned = os.path.join(landsat_output, f"landsat_b5_{i:03d}_aligned.tif")
 
-            # Reflectance is continuous → bilinear is typically better for NDVI
-            b4_success = self.grid_manager.align_raster_to_grid(b4_file, b4_aligned, aoi_metadata, Resampling.nearest)
-            b5_success = self.grid_manager.align_raster_to_grid(b5_file, b5_aligned, aoi_metadata, Resampling.nearest)
+            # Keep nearest-neighbor to preserve DN integrity before NDVI
+            b4_ok = self.grid_manager.align_raster_to_grid(b4_file, b4_aligned, aoi_metadata, Resampling.nearest)
+            b5_ok = self.grid_manager.align_raster_to_grid(b5_file, b5_aligned, aoi_metadata, Resampling.nearest)
 
-            if b4_success and b5_success:
+            if b4_ok and b5_ok:
                 ndvi_path = os.path.join(landsat_output, f"landsat_ndvi_{i:03d}.tif")
                 self._calculate_ndvi_file(b4_aligned, b5_aligned, ndvi_path)
                 processed_count += 1
@@ -301,7 +326,7 @@ class LandsatProcessor:
                 b4 = b4_src.read(1).astype(np.float32)
                 b5 = b5_src.read(1).astype(np.float32)
 
-                # If values look like DN, apply L2 scale/offset (0.0000275, -0.2)
+                # If values look like DN, apply L2 scale/offset (USGS L2)
                 if np.nanmax(b4) > 1.5 or np.nanmax(b5) > 1.5:
                     b4 = b4 * 0.0000275 - 0.2
                     b5 = b5 * 0.0000275 - 0.2
@@ -336,7 +361,6 @@ class LandsatProcessor:
                 LoggingUtils.print_error(f"Error loading Landsat data: {e}")
 
         return landsat_data
-
 
 class PRISMProcessor:
     """
