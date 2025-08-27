@@ -55,17 +55,17 @@ class ETMapConfig:
     STATIC_LAYERS_CONFIG = {
         'elevation': {
             'path_key': 'elevation',
-            'resampling': 'bilinear',
+            'resampling': 'nearest',
             'output_name': 'elevation_aligned.tif'
         },
         'soil_awc': {
             'path_key': 'soil_awc',
-            'resampling': 'bilinear',
+            'resampling': 'nearest',
             'output_name': 'soil_awc_aligned.tif'
         },
         'soil_fc': {
             'path_key': 'soil_fc',
-            'resampling': 'bilinear',
+            'resampling': 'nearest',
             'output_name': 'soil_fc_aligned.tif'
         },
         'nlcd': {

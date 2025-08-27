@@ -168,10 +168,10 @@ class NLDASProcessor:
                     return dst
 
                 # Continuous fields -> bilinear
-                temp_a = _reproj_one(temp, Resampling.bilinear)
-                hum_a = _reproj_one(humidity, Resampling.bilinear)
-                wspd_a = _reproj_one(wind_speed, Resampling.bilinear)
-                rad_a = _reproj_one(radiation, Resampling.bilinear)
+                temp_a = _reproj_one(temp, Resampling.nearest)
+                hum_a = _reproj_one(humidity, Resampling.nearest)
+                wspd_a = _reproj_one(wind_speed, Resampling.nearest)
+                rad_a = _reproj_one(radiation, Resampling.nearest)
 
                 return np.stack([temp_a, hum_a, wspd_a, rad_a], axis=0)
 
@@ -284,8 +284,8 @@ class LandsatProcessor:
             b5_aligned = os.path.join(landsat_output, f"landsat_b5_{i:03d}_aligned.tif")
 
             # Reflectance is continuous → bilinear is typically better for NDVI
-            b4_success = self.grid_manager.align_raster_to_grid(b4_file, b4_aligned, aoi_metadata, Resampling.bilinear)
-            b5_success = self.grid_manager.align_raster_to_grid(b5_file, b5_aligned, aoi_metadata, Resampling.bilinear)
+            b4_success = self.grid_manager.align_raster_to_grid(b4_file, b4_aligned, aoi_metadata, Resampling.nearest)
+            b5_success = self.grid_manager.align_raster_to_grid(b5_file, b5_aligned, aoi_metadata, Resampling.nearest)
 
             if b4_success and b5_success:
                 ndvi_path = os.path.join(landsat_output, f"landsat_ndvi_{i:03d}.tif")
@@ -378,7 +378,7 @@ class PRISMProcessor:
                 output_file = os.path.join(date_output, f"{base_name}_aligned.tif")
 
                 success = self.grid_manager.align_raster_to_grid(
-                    prism_file, output_file, aoi_metadata, Resampling.bilinear
+                    prism_file, output_file, aoi_metadata, Resampling.nearest
                 )
                 if success:
                     processed_count += 1

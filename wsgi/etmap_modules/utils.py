@@ -267,7 +267,7 @@ class ArrayUtils:
         try:
             from scipy.ndimage import zoom
             zoom_factors = (target_shape[0] / array.shape[0], target_shape[1] / array.shape[1])
-            resized_array = zoom(array, zoom_factors, order=1)
+            resized_array = zoom(array, zoom_factors, order=0)
         except ImportError:
             # Fallback to simple numpy resizing if scipy not available
             resized_array = np.resize(array, target_shape)

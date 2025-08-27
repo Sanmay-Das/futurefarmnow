@@ -267,7 +267,7 @@ class BAITSSSAlgorithm:
         elevation = variables['elevation'].astype(np.float32)
         nlcd = variables['nlcd'].astype(np.float32)
         # PRISM daily precip → hourly (assume mm/day repeated per hour otherwise)
-        precip_hour = (variables['precipitation'] / 24.0).astype(np.float32)
+        precip_hour = variables['precipitation'].astype(np.float32)
 
         ndvi = variables['ndvi'].astype(np.float32)
         lai  = variables['lai'].astype(np.float32)

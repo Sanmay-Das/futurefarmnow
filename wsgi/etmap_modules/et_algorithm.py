@@ -341,7 +341,7 @@ class ETAlgorithm:
             dst.write(enhanced_data)
 
     def _create_comprehensive_et_summary(self, output_dir: str):
-        """Create comprehensive ET summary maps and statistics"""
+        """Create daily ET increments and a final period summary from them."""
         try:
             print("📊 Creating comprehensive ET summary...")
 
@@ -350,23 +350,23 @@ class ETAlgorithm:
                 print("❌ No enhanced files found for summary")
                 return
 
-            # Group files by day
             daily_groups = self._group_files_by_day(enhanced_files)
 
-            # Create daily summaries
+            # build daily increments carrying forward the cumulative baseline
             daily_et_files: List[str] = []
-            for date_str, files in daily_groups.items():
-                daily_et_path = self._create_daily_et_summary(files, output_dir, date_str)
-                if daily_et_path:
-                    daily_et_files.append(daily_et_path)
+            prev_cum = None
+            for date_str in sorted(daily_groups.keys()):
+                result = self._create_daily_et_summary(daily_groups[date_str], output_dir, date_str, prev_cum)
+                if result:
+                    daily_path, prev_cum = result
+                    daily_et_files.append(daily_path)
 
-            # Create final period summary
+            # final period map (mean over daily ETs; switch to sum if you prefer)
             if daily_et_files:
                 self._create_final_et_summary(daily_et_files, output_dir)
 
-            # Create comprehensive JSON summary
+            # JSON summary
             self._create_json_summary(output_dir, enhanced_files)
-
             print("🎯 Comprehensive ET summary completed!")
 
         except Exception as e:
@@ -381,35 +381,57 @@ class ETAlgorithm:
             daily_groups.setdefault(date_part, []).append(file_path)
         return daily_groups
 
-    def _create_daily_et_summary(self, hourly_files: List[str], output_dir: str, date_str: str) -> Optional[str]:
-        """Create daily ET summary from hourly files"""
+    def _create_daily_et_summary(self, hourly_files: List[str], output_dir: str, date_str: str,
+                             baseline_cum: Optional[np.ndarray]) -> Optional[tuple]:
+        """
+        Create daily ET (increment) from cumulative band:
+        daily = last_cumulative_of_day - baseline_cumulative (prev day's last).
+        Returns (daily_et_path, last_cumulative_of_day).
+        """
         try:
-            et_arrays: List[np.ndarray] = []
+            hourly_files = sorted(hourly_files)
             template_file = hourly_files[0]
 
-            for file_path in hourly_files:
-                with rasterio.open(file_path) as src:
-                    original_bands = src.count - 5  # 5 appended BAITSSS layers
-                    et_data = src.read(original_bands + 1)  # et_cumulative band (1-indexed)
-                    et_arrays.append(et_data)
+            # figure out index of et_cumulative band (original + 1)
+            with rasterio.open(template_file) as src0:
+                original_bands = src0.count - 5  # 5 appended BAITSSS layers
+                profile = src0.profile.copy()
+                profile.update({'count': 1, 'dtype': 'float32', 'nodata': -9999})
 
-            et_stack = np.stack(et_arrays, axis=0)
-            daily_et = et_stack[-1]  # Last hour cumulative
+            # read last cumulative of the day
+            last_file = hourly_files[-1]
+            with rasterio.open(last_file) as src_last:
+                et_last = src_last.read(original_bands + 1)  # et_cumulative
+                bounds = src_last.bounds
+
+            # baseline: previous day's last cumulative (or zeros for first day)
+            if baseline_cum is None:
+                baseline = np.zeros_like(et_last, dtype=np.float32)
+            else:
+                baseline = baseline_cum.astype(np.float32)
+
+            daily = (et_last.astype(np.float32) - baseline)
+            # keep NoData consistent: if last is nodata, mark daily nodata
+            nodata = -9999.0
+            mask = (et_last == nodata)
+            daily = np.where(mask, nodata, daily).astype(np.float32)
 
             daily_et_path = os.path.join(output_dir, f"ET_daily_{date_str}.tif")
             with rasterio.open(template_file) as template:
-                profile = template.profile.copy()
-                profile.update({'count': 1, 'dtype': 'float32', 'nodata': -9999})
-                with rasterio.open(daily_et_path, 'w', **profile) as dst:
-                    dst.write(daily_et, 1)
-                    dst.set_band_description(1, f"Daily ET Sum - {date_str}")
+                prof = template.profile.copy()
+                prof.update({'count': 1, 'dtype': 'float32', 'nodata': -9999})
+                with rasterio.open(daily_et_path, 'w', **prof) as dst:
+                    dst.write(daily, 1)
+                    dst.set_band_description(1, f"Daily ET increment - {date_str}")
 
-            print(f"    📅 Created daily summary: {date_str}")
-            return daily_et_path
+            print(f"    📅 Created daily summary (increment): {date_str}")
+            return (daily_et_path, et_last)
 
         except Exception as e:
             print(f"    💥 Error creating daily summary for {date_str}: {e}")
             return None
+
+
 
     def _create_final_et_summary(self, daily_et_files: List[str], output_dir: str):
         """Create final period ET summary"""
