@@ -18,7 +18,7 @@ let currentRequestId = null;
 let pollInterval = null;
 let lastRequestData = null;
 
-const API_BASE_URL = 'http://127.0.0.1:5000/v1';
+const API_BASE_URL = 'http://127.0.0.1:5000';
 
 // ============================ INIT ============================
 document.addEventListener('DOMContentLoaded', () => {
@@ -325,7 +325,7 @@ async function startPolling() {
 
 async function checkStatus() {
   try {
-    const resp = await fetch(`${API_BASE_URL}/etmap/${currentRequestId}`);
+    const resp = await fetch(`${API_BASE_URL}/etmap/${currentRequestId}.json`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
     const st = await resp.json();
     updateStatusDisplay(st);
@@ -464,15 +464,14 @@ function showResults() {
       <strong>Status:</strong> Completed<br>
       <strong>Output:</strong> ET calculations ready
     </div>
-    <div style="margin:1rem 0; text-align:center; border:2px solid #667eea; border-radius:8px; padding:1rem; background:#f8f9fa;">
-      <h4 style="color:#667eea; margin-bottom:1rem;">Final ET Map</h4>
+    <div style="margin:1rem 0; text-align:center;">
       <img id="et-map-image"
            src="${API_BASE_URL}/etmap/${currentRequestId}.png"
            alt="ET Map Result"
            style="max-width:100%; height:auto; border-radius:4px; cursor:pointer;"
            onclick="openETMapInNewTab()"
            onerror="handleETMapError(this)">
-      <p style="margin-top:.5rem; font-size:.8rem; color:#666;">Click image to view full size • ET values in mm/day</p>
+      <p style="margin-top:.5rem; font-size:.8rem; color:#666;">Click image to view full size</p>
     </div>
   `;
 }
