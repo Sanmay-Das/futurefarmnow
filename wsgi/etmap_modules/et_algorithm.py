@@ -44,23 +44,23 @@ class ETAlgorithm:
 
     def create_enhanced_hourly_files_with_et(self, hourly_files_dir: str, output_dir: str) -> bool:
         """Main workflow: Process hourly files with temporal continuity"""
-        print("🚀 Starting BAITSSS ET Processing...")
-        print(f"📂 Input: {hourly_files_dir}")
-        print(f"📁 Output: {output_dir}")
+        print("Starting BAITSSS ET Processing...")
+        print(f"Input: {hourly_files_dir}")
+        print(f"Output: {output_dir}")
 
         try:
             hourly_files = self._get_sorted_hourly_files(hourly_files_dir)
             if not hourly_files:
-                print(f"❌ ERROR: No hourly files found in {hourly_files_dir}")
+                print(f"ERROR: No hourly files found in {hourly_files_dir}")
                 return False
 
-            print(f"📊 Found {len(hourly_files)} hourly files to process")
+            print(f"Found {len(hourly_files)} hourly files to process")
             os.makedirs(output_dir, exist_ok=True)
 
             processed_count = self._process_hourly_sequence(hourly_files, output_dir)
 
-            print("\n🎉 Processing Summary:")
-            print(f"   ✅ Successfully processed: {processed_count}/{len(hourly_files)} files")
+            print("\n Processing Summary:")
+            print(f"   Successfully processed: {processed_count}/{len(hourly_files)} files")
 
             if processed_count > 0:
                 self._create_comprehensive_et_summary(output_dir)
@@ -68,7 +68,7 @@ class ETAlgorithm:
             return False
 
         except Exception as e:
-            print(f"💥 ERROR: ET processing failed: {e}")
+            print(f"ERROR: ET processing failed: {e}")
             import traceback
             traceback.print_exc()
             return False
@@ -86,15 +86,15 @@ class ETAlgorithm:
 
         for i, hourly_file in enumerate(hourly_files):
             filename = os.path.basename(hourly_file)
-            print(f"⏰ Processing hour {i+1}/{len(hourly_files)}: {filename}")
+            print(f"Processing hour {i+1}/{len(hourly_files)}: {filename}")
 
             current_state = self._process_single_hourly_file(hourly_file, output_dir, previous_state)
             if current_state is not None:
                 processed_count += 1
                 previous_state = current_state  # Temporal continuity
-                print(f"   ✅ Completed: {filename}")
+                print(f"   Completed: {filename}")
             else:
-                print(f"   ❌ Failed: {filename}")
+                print(f"   Failed: {filename}")
 
         return processed_count
 
@@ -111,15 +111,15 @@ class ETAlgorithm:
                 height, width = input_data.shape[1], input_data.shape[2]
                 profile = src.profile
 
-                print(f"    📐 Processing {height}x{width} pixels in blocks...")
+                print(f"    Processing {height}x{width} pixels in blocks...")
 
                 # Initialize or use previous state
                 if previous_state is None:
-                    print("    🌱 Initializing first hour state...")
+                    print("    Initializing first hour state...")
                     current_state = self._initialize_et_state(height, width)
                 else:
                     current_state = {k: v.copy() for k, v in previous_state.items()}
-                    print("    🔄 Using previous hour state...")
+                    print("    Using previous hour state...")
 
                 # Extract variables from input bands
                 variables = self._extract_variables_from_bands(input_data)
@@ -133,11 +133,11 @@ class ETAlgorithm:
                 enhanced_data = self._create_enhanced_output(input_data, updated_state)
                 self._save_enhanced_file(enhanced_data, output_path, profile)
 
-                print(f"    💾 Saved: {output_filename} ({enhanced_data.shape[0]} bands)")
+                print(f"    Saved: {output_filename} ({enhanced_data.shape[0]} bands)")
                 return updated_state
 
         except Exception as e:
-            print(f"    💥 Error processing {hourly_file}: {e}")
+            print(f"    Error processing {hourly_file}: {e}")
             return None
 
     def _initialize_et_state(self, height: int, width: int) -> Dict[str, np.ndarray]:
@@ -181,7 +181,7 @@ class ETAlgorithm:
             10: 'radiation',
         }
 
-        print(f"    📊 Extracting variables from {input_data.shape[0]} input bands...")
+        print(f"    Extracting variables from {input_data.shape[0]} input bands...")
 
         variables: Dict[str, np.ndarray] = {}
         H, W = input_data.shape[1], input_data.shape[2]
@@ -198,7 +198,7 @@ class ETAlgorithm:
                 print(f"      Band {band_idx+1}: {var_name} - Using defaults")
 
         # Report data quality
-        print("    🔍 Data validation:")
+        print("    Data validation:")
         for var_name, var_data in variables.items():
             valid_pixels = np.sum(~np.isnan(var_data))
             print(f"      {var_name}: {valid_pixels:,} valid pixels")
@@ -239,9 +239,9 @@ class ETAlgorithm:
         Coordinates with BAITSSSAlgorithm for pure physics
         """
         try:
-            print(f"    🔧 Starting block-wise BAITSSS processing...")
-            print(f"    📐 Raster size: {height}x{width} pixels")
-            print(f"    🧱 Block size: {self.block_size}x{self.block_size}")
+            print(f"    Starting block-wise BAITSSS processing...")
+            print(f"    Raster size: {height}x{width} pixels")
+            print(f"    Block size: {self.block_size}x{self.block_size}")
 
             et_hourly = np.zeros((height, width), dtype=np.float32)
             new_soil_surface = state['soil_moisture_surface'].copy()
@@ -253,7 +253,7 @@ class ETAlgorithm:
             total_blocks = ((height + self.block_size - 1) // self.block_size) * \
                             ((width + self.block_size - 1) // self.block_size)
 
-            print(f"    📊 Total blocks to process: {total_blocks}")
+            print(f"    Total blocks to process: {total_blocks}")
 
             for b_i in range(0, height, self.block_size):
                 for b_j in range(0, width, self.block_size):
@@ -269,21 +269,21 @@ class ETAlgorithm:
                         new_soil_root[b_i:b_i+block_height, b_j:b_j+block_width] = block_results['soil_root']
                         irrigation_hour[b_i:b_i+block_height, b_j:b_j+block_width] = block_results['irrigation']
                     else:
-                        print(f"      ⚠️  Block at ({b_i}, {b_j}) failed - using defaults")
+                        print(f"      Block at ({b_i}, {b_j}) failed - using defaults")
                         et_hourly[b_i:b_i+block_height, b_j:b_j+block_width] = 2.0  # mm/hour default
 
                     blocks_processed += 1
                     if blocks_processed % 10 == 0 or blocks_processed == total_blocks:
                         progress = 100 * blocks_processed / total_blocks
-                        print(f"      🔄 Progress: {progress:.1f}% ({blocks_processed}/{total_blocks} blocks)")
+                        print(f"      Progress: {progress:.1f}% ({blocks_processed}/{total_blocks} blocks)")
 
             # Summaries
             et_valid = np.sum((et_hourly > 0) & (et_hourly < 50))
             et_mean = float(np.mean(et_hourly[et_hourly > 0])) if np.any(et_hourly > 0) else 0.0
-            print("    📈 ET Results Summary:")
-            print(f"      Valid ET pixels: {et_valid:,}")
-            print(f"      Mean hourly ET: {et_mean:.3f} mm/hour")
-            print(f"      ET range: {np.min(et_hourly):.3f} - {np.max(et_hourly):.3f} mm/hour")
+            print("    ET Results Summary:")
+            print(f"   Valid ET pixels: {et_valid:,}")
+            print(f"   Mean hourly ET: {et_mean:.3f} mm/hour")
+            print(f"   ET range: {np.min(et_hourly):.3f} - {np.max(et_hourly):.3f} mm/hour")
 
             # Update cumulative state
             updated_state = {
@@ -294,11 +294,11 @@ class ETAlgorithm:
                 'soil_moisture_root': new_soil_root,
             }
 
-            print("    ✅ Block-wise processing completed successfully!")
+            print("    Block-wise processing completed successfully!")
             return updated_state
 
         except Exception as e:
-            print(f"    💥 Block-wise processing failed: {e}")
+            print(f"    Block-wise processing failed: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -343,11 +343,11 @@ class ETAlgorithm:
     def _create_comprehensive_et_summary(self, output_dir: str):
         """Create daily ET increments and a final period summary from them."""
         try:
-            print("📊 Creating comprehensive ET summary...")
+            print(" Creating comprehensive ET summary...")
 
             enhanced_files = sorted(glob.glob(os.path.join(output_dir, "*_enhanced.tif")))
             if not enhanced_files:
-                print("❌ No enhanced files found for summary")
+                print(" No enhanced files found for summary")
                 return
 
             daily_groups = self._group_files_by_day(enhanced_files)
@@ -367,10 +367,10 @@ class ETAlgorithm:
 
             # JSON summary
             self._create_json_summary(output_dir, enhanced_files)
-            print("🎯 Comprehensive ET summary completed!")
+            print(" Comprehensive ET summary completed!")
 
         except Exception as e:
-            print(f"💥 Error creating ET summary: {e}")
+            print(f" Error creating ET summary: {e}")
 
     def _group_files_by_day(self, enhanced_files: List[str]) -> Dict[str, List[str]]:
         """Group enhanced files by day"""
@@ -424,11 +424,11 @@ class ETAlgorithm:
                     dst.write(daily, 1)
                     dst.set_band_description(1, f"Daily ET increment - {date_str}")
 
-            print(f"    📅 Created daily summary (increment): {date_str}")
+            print(f"     Created daily summary (increment): {date_str}")
             return (daily_et_path, et_last)
 
         except Exception as e:
-            print(f"    💥 Error creating daily summary for {date_str}: {e}")
+            print(f"     Error creating daily summary for {date_str}: {e}")
             return None
 
 
@@ -436,7 +436,7 @@ class ETAlgorithm:
     def _create_final_et_summary(self, daily_et_files: List[str], output_dir: str):
         """Create final period ET summary"""
         try:
-            print("🎯 Creating final ET summary...")
+            print(" Creating final ET summary...")
 
             daily_arrays: List[np.ndarray] = []
             template_file = daily_et_files[0]
@@ -471,15 +471,15 @@ class ETAlgorithm:
             try:
                 self._create_et_visualization(mean_et, output_dir, bounds)
             except ImportError:
-                print("    ⚠️  Matplotlib not available - skipping PNG creation")
+                print("      Matplotlib not available - skipping PNG creation")
 
-            print(f"    🎯 Final ET TIF created: {final_et_tif}")
+            print(f"     Final ET TIF created: {final_et_tif}")
 
         except Exception as e:
-            print(f"    💥 Error creating final summary: {e}")
+            print(f"     Error creating final summary: {e}")
             
     def _create_et_visualization(self, et_data: np.ndarray, output_dir: str, bounds=None):
-        """Create PNG visualization without axis ticks/labels (no lon/lat shown)."""
+        """Create clean PNG visualization with just the image data."""
         import matplotlib.pyplot as plt
 
         et_masked = np.ma.masked_where(et_data == -9999, et_data)
@@ -507,25 +507,17 @@ class ETAlgorithm:
             aspect=aspect,
         )
 
-        # Title only; no lon/lat axes
-        ax.set_title('BAITSSS Evapotranspiration Map', fontsize=13, weight='bold')
-
-        # Remove axis labels, ticks, and spines so no lon/lat text shows
-        ax.set_xlabel('')
-        ax.set_ylabel('')
-        ax.set_xticks([])
-        ax.set_yticks([])
-        for spine in ax.spines.values():
-            spine.set_visible(False)
-        ax.grid(False)
-
-        cbar = fig.colorbar(im, ax=ax, label='ET (mm/day)', shrink=0.8)
+        ax.axis('off')
+        
+        plt.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0, wspace=0)
+        plt.margins(0, 0)
+        ax.xaxis.set_major_locator(plt.NullLocator())
+        ax.yaxis.set_major_locator(plt.NullLocator())
 
         png_path = os.path.join(output_dir, "ET_final_result.png")
-        fig.savefig(png_path, dpi=220, bbox_inches='tight', facecolor='white')
+        fig.savefig(png_path, dpi=220, bbox_inches='tight', pad_inches=0, facecolor='none', edgecolor='none')
         plt.close(fig)
-        print(f"    🖼️  ET visualization created: {png_path}")
-
+        print(f"      ET visualization created: {png_path}")
 
     def _create_json_summary(self, output_dir: str, enhanced_files: List[str]):
         """Create comprehensive JSON summary"""
@@ -569,10 +561,10 @@ class ETAlgorithm:
             summary_path = os.path.join(output_dir, "ET_comprehensive_summary.json")
             with open(summary_path, 'w') as f:
                 json.dump(summary, f, indent=2)
-            print(f"    📋 JSON summary created: {summary_path}")
+            print(f"     JSON summary created: {summary_path}")
 
         except Exception as e:
-            print(f"    💥 Error creating JSON summary: {e}")
+            print(f"     Error creating JSON summary: {e}")
 
 
 class ETResultsManager:

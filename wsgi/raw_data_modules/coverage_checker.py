@@ -112,7 +112,7 @@ class SpatialCoverageChecker:
         if coverage_polygons:
             total_coverage = unary_union(coverage_polygons)
             is_covered = total_coverage.contains(aoi_geometry)
-            print(f"✓ Landsat coverage computed: {len(coverage_polygons)} scenes, covered: {is_covered}")
+            print(f" Landsat coverage computed: {len(coverage_polygons)} scenes, covered: {is_covered}")
             return is_covered
         else:
             print("No existing Landsat coverage found in the requested dates" if dates_set else "No existing Landsat coverage found")
@@ -157,7 +157,7 @@ class SpatialCoverageChecker:
         required_days = (datetime.fromisoformat(date_to) - datetime.fromisoformat(date_from)).days + 1
         
         if len(found_dates) >= required_days and prism_coverage and prism_coverage.contains(aoi_geometry):
-            print(f"✓ PRISM coverage found for {len(found_dates)}/{required_days} required dates")
+            print(f" PRISM coverage found for {len(found_dates)}/{required_days} required dates")
             return True
         else:
             print(f"PRISM coverage incomplete: {len(found_dates)}/{required_days} dates available")
@@ -216,7 +216,7 @@ class SpatialCoverageChecker:
             try:
                 total_nldas_coverage = unary_union(coverage_polygons)
                 spatial_coverage = total_nldas_coverage.contains(aoi_geometry)
-                print(f"✓ NLDAS spatial coverage computed: {len(coverage_polygons)} files, AOI covered: {spatial_coverage}")
+                print(f" NLDAS spatial coverage computed: {len(coverage_polygons)} files, AOI covered: {spatial_coverage}")
             except Exception as e:
                 print(f"Warning: Could not compute NLDAS spatial union: {e}")
                 spatial_coverage = nldas_coverage.contains(aoi_geometry) if nldas_coverage else False
@@ -224,7 +224,7 @@ class SpatialCoverageChecker:
             spatial_coverage = False
         
         if coverage_ratio >= 0.9 and spatial_coverage:
-            print(f"✓ NLDAS coverage found: {found_hours}/{total_required_hours} hours ({coverage_ratio:.1%}) with spatial coverage")
+            print(f" NLDAS coverage found: {found_hours}/{total_required_hours} hours ({coverage_ratio:.1%}) with spatial coverage")
             return True
         else:
             if coverage_ratio < 0.9:
