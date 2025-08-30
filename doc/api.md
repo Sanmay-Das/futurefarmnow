@@ -501,7 +501,7 @@ curl -X POST "https://raptor.cs.ucr.edu/futurefarmnow-backend-0.3-RC1/etmap" -H 
 
 ## Get data fetching status
 
-Check the status of an ETMap data collection request using the request ID.
+Check the status of an ET Map data collection request using the request ID.
 
 | Endpoint    | `/etmap/<request_id>.json`                                   |
 |-------------|--------------------------------------------------------------|
@@ -561,7 +561,7 @@ Check the status of an ETMap data collection request using the request ID.
 ```
 ## Get ET map image for a region
 
-Get an ET map image of a region defined by a GeoJSON geometry.
+Get an ET map image of a region.
 
 | Endpoint     | `/etmap/<request_id>.png`|
 |--------------|--------------------------|
