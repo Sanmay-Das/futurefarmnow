@@ -499,9 +499,9 @@ curl -X POST "https://raptor.cs.ucr.edu/futurefarmnow-backend-0.3-RC1/etmap" -H 
 }
 ```
 
-## Get data fetching status
+## Get ET Map status
 
-Check the status of an ET Map data collection request using the request ID.
+Check the status of an ET Map request using the request ID.
 
 | Endpoint    | `/etmap/<request_id>.json`                                   |
 |-------------|--------------------------------------------------------------|
