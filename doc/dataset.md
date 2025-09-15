@@ -1,7 +1,6 @@
 # FutureFarmNow Dataset Documentation
 ## NLDAS
 1. Login to https://urs.earthdata.nasa.gov/home
-
 2. Go to Applications -> Authorised Apps and approve **NASA GESDISC DATA ARCHIVE**
 
 Terminal:
@@ -19,14 +18,15 @@ export NETRC=$HOME/.netrc
 ```
 ## Elevation
 1. Go to https://landfire.gov/topographic/elevation 
-
 2. Select CONUS
-
 3. Filter Theme as Topographic
-
 4. Download elevation data under the Elevation - ELEV section
 
 ## NLCD
 Go to https://www.sciencebase.gov/catalog/item/6810c1a4d4be022940554075 and download the latest year NLCD data
+
+## SSURGO
+1. Go to https://www.sciencebase.gov/catalog/item/5fd7c19cd34e30b9123cb51f
+2. Navigate to **Attached Files** and download **awc_gNATSGO.zip** and **fc_gNATSGO.zip**
 
 
