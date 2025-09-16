@@ -18,11 +18,12 @@ from etmap_modules.et_algorithm import ETAlgorithm
 
 
 class ETCalculationManager:
-    def __init__(self, db_path: str = None):
+    def __init__(self, db_path: str = None, save_intermediate_files: bool = False):
         self.db_path = db_path or ETMapConfig.DB_PATH
         self.db_manager = DatabaseManager(self.db_path)
         self.processor = ModularProcessor(db_path=self.db_path)
         self.et_algorithm = ETAlgorithm()
+        self.save_intermediate_files = save_intermediate_files
     
     def process_with_curl_integration(self, curl_command: str, output_path: str = None) -> bool:
         """
@@ -83,7 +84,10 @@ class ETCalculationManager:
                     print("COMPLETE ETMAP CALCULATION FINISHED!")
                     print(f"Results stored in UUID folder: {request_id}")
                     print(f"Location: {output_path}")
-                    print(f"Hourly aligned files: {output_path}/hourly_aligned/")
+                    if self.save_intermediate_files:
+                        print(f"Hourly aligned files: {output_path}/hourly_aligned/")
+                    else:
+                        print("Intermediate files kept in memory (not saved to disk)")
                     print(f"ET-enhanced files: {output_path}/et_enhanced/")
                     print("Ready for QGIS and ET analysis!")
                     print("="*60)
@@ -132,6 +136,10 @@ class ETCalculationManager:
                 print("ETMAP CALCULATION COMPLETED WITH BAITSSS ET!")
                 print(f"Results stored in UUID folder: {request_id}")
                 print(f"Location: {output_path}")
+                if self.save_intermediate_files:
+                    print(f"Intermediate files: {output_path}/hourly_aligned/")
+                else:
+                    print("Intermediate files kept in memory (not saved to disk)")
                 print(f"ET-enhanced files: {output_path}/et_enhanced/")
                 print("="*60)
                 return True
@@ -155,7 +163,11 @@ class ETCalculationManager:
         print(f"Output ET dir   : {et_out_dir}")
 
         try:
-            ok = self.et_algorithm.create_enhanced_hourly_files_with_et(hourly_dir, et_out_dir)
+            ok = self.et_algorithm.create_enhanced_hourly_files_with_et(
+                hourly_dir, 
+                et_out_dir, 
+                save_intermediate_files=self.save_intermediate_files
+            )
             return bool(ok)
         except Exception as e:
             print(f"ERROR: ET step crashed: {e}")
@@ -495,20 +507,24 @@ def main():
     parser.add_argument('--db-path', type=str, help='Path to SQLite database (optional)')
     parser.add_argument('--max-wait', type=int, default=30, help='Maximum wait time for data collection in minutes')
     
+    # Change this to control default behavior
+    DEFAULT_SAVE_INTERMEDIATE_FILES = True  # Change to True to save intermediates by default
+    
     args = parser.parse_args()
     
     print("="*60)
     print("COMPLETE ETMAP PROCESSOR - MODULAR BAITSSS ET")
     print("Creates basic aligned data + hourly aligned files + ET calculations")
     print("Modular Architecture: ETAlgorithm ← BAITSSSAlgorithm")
+    print(f"Intermediate files: {'SAVED TO DISK' if DEFAULT_SAVE_INTERMEDIATE_FILES else 'MEMORY ONLY'}")
     print("="*60)
     
     try:
         # Ensure directories exist
         ETMapConfig.ensure_directories_exist()
         
-        # Create calculation manager
-        calc_manager = ETCalculationManager(args.db_path)
+        # Create calculation manager with the flag
+        calc_manager = ETCalculationManager(args.db_path, DEFAULT_SAVE_INTERMEDIATE_FILES)
         
         success = False
         
@@ -525,6 +541,10 @@ def main():
         if success:
             print("\n" + "="*60)
             print("ETMAP CALCULATION WITH MODULAR BAITSSS ET COMPLETED SUCCESSFULLY!")
+            if DEFAULT_SAVE_INTERMEDIATE_FILES:
+                print("All intermediate files saved to disk")
+            else:
+                print("Intermediate files kept in memory - only final ET results saved to disk")
             print("="*60)
             sys.exit(0)
         else:
