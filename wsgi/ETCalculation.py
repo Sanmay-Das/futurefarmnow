@@ -323,6 +323,8 @@ class CompleteETMapProcessor:
         # Extract parameters from request
         date_from = request_data['date_from']
         date_to = request_data['date_to']
+        # Extract year for NLCD selection
+        year = int(date_from.split('-')[0])
         geometry_dict = request_data['geometry']
         
         from shapely.geometry import shape
@@ -339,7 +341,7 @@ class CompleteETMapProcessor:
         
         # Collect sample datasets
         print("\n=== Collecting Sample Datasets ===")
-        sample_datasets = DataCollector.collect_sample_datasets()
+        sample_datasets = DataCollector.collect_sample_datasets(year)
         
         if not sample_datasets:
             print("ERROR: No sample datasets found. Check your data paths.")
@@ -349,6 +351,7 @@ class CompleteETMapProcessor:
         print("\n=== Computing Unified Grid ===")
         global_metadata = self.grid_manager.compute_unified_grid(aoi_geometry, sample_datasets)
         
+
         # Clip to AOI
         print("\n=== Clipping to AOI ===")
         aoi_metadata = self.grid_manager.clip_to_aoi(aoi_geometry)
@@ -359,7 +362,7 @@ class CompleteETMapProcessor:
         # Process basic datasets first
         print("\n=== STEP 1: Creating Basic Aligned Datasets ===")
         self._process_landsat_data(aoi_metadata, output_base_path)
-        self._process_static_data(aoi_metadata, output_base_path)
+        self._process_static_data(aoi_metadata, output_base_path, year)
         self._process_prism_data_by_dates(aoi_metadata, date_from, date_to, output_base_path)
         
         # Create hourly aligned files
@@ -399,10 +402,10 @@ class CompleteETMapProcessor:
         print("Processing Landsat Data...")
         self.landsat_processor.process_landsat_data(aoi_metadata, output_base_path)
     
-    def _process_static_data(self, aoi_metadata: dict, output_base_path: str):
+    def _process_static_data(self, aoi_metadata: dict, output_base_path: str, year: int = None):
         """Process static data following the original logic"""
         print("Processing Static Data...")
-        self.static_processor.process_static_data(aoi_metadata, output_base_path)
+        self.static_processor.process_static_data(aoi_metadata, output_base_path, year)
     
     def _process_prism_data_by_dates(self, aoi_metadata: dict, date_from: str, date_to: str, output_base_path: str):
         """Process PRISM data following the original logic"""
@@ -508,7 +511,7 @@ def main():
     parser.add_argument('--max-wait', type=int, default=30, help='Maximum wait time for data collection in minutes')
     
     # Change this to control default behavior
-    DEFAULT_SAVE_INTERMEDIATE_FILES = True  # Change to True to save intermediates by default
+    DEFAULT_SAVE_INTERMEDIATE_FILES = False  # Change to True to save intermediates by default
     
     args = parser.parse_args()
     

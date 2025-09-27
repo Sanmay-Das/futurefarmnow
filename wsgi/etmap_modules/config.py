@@ -31,9 +31,12 @@ class ETMapConfig:
         'elevation': os.path.join(DATA_BASE_PATH, 'LF2020_Elev_220_CONUS/Tif/LC20_Elev_220.tif'),
         'soil_awc': os.path.join(DATA_BASE_PATH, 'Soil_Data/awc_gNATSGO_US.tif'),
         'soil_fc': os.path.join(DATA_BASE_PATH, 'Soil_Data/fc_gNATSGO_US.tif'),
-        'nlcd': os.path.join(DATA_BASE_PATH, 'NLCD/Annual_NLCD_LndCov_2024_CU_C1V1/Annual_NLCD_LndCov_2024_CU_C1V1.tif')
+        'nlcd': os.path.join(DATA_BASE_PATH, 'NLCD/Annual_NLCD_LndCov_{year}_CU_C1V1/Annual_NLCD_LndCov_{year}_CU_C1V1.tif')
     }
     
+    # Available NLCD years (just list the years you have)
+    AVAILABLE_NLCD_YEARS = [2019, 2024]
+
     # Processing configuration
     TARGET_CRS = 'EPSG:4326'
     DEFAULT_CELL_SIZE = 0.0002778  # ~30m at equator (Landsat resolution)
@@ -110,8 +113,21 @@ class ETMapConfig:
             os.makedirs(directory, exist_ok=True)
     
     @classmethod
-    def get_static_data_path(cls, data_type: str) -> str:
+    def get_static_data_path(cls, data_type: str, year: int = None) -> str:
         """Get path for static data type"""
+        if data_type == 'nlcd':
+            if year is None:
+                # Use most recent year as default
+                year = max(cls.AVAILABLE_NLCD_YEARS)
+            
+            # Find closest available year
+            if year not in cls.AVAILABLE_NLCD_YEARS:
+                year = min(cls.AVAILABLE_NLCD_YEARS, key=lambda x: abs(x - year))
+            
+            # Use the pattern to build the path
+            nlcd_path = f'NLCD/Annual_NLCD_LndCov_{year}_CU_C1V1/Annual_NLCD_LndCov_{year}_CU_C1V1.tif'
+            return os.path.join(cls.DATA_BASE_PATH, nlcd_path)
+        
         return cls.STATIC_DATA_PATHS.get(data_type, '')
     
     @classmethod

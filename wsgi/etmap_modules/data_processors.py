@@ -472,7 +472,7 @@ class StaticDataProcessor:
     def __init__(self, grid_manager: UnifiedGridManager):
         self.grid_manager = grid_manager
 
-    def process_static_data(self, aoi_metadata: Dict, output_base_path: str):
+    def process_static_data(self, aoi_metadata: Dict, output_base_path: str, year: int = None):
         LoggingUtils.print_step_header("Processing Static Data")
 
         static_output = ETMapConfig.get_output_path(os.path.basename(output_base_path), 'static')
@@ -480,7 +480,12 @@ class StaticDataProcessor:
 
         for layer_name, cfg in ETMapConfig.STATIC_LAYERS_CONFIG.items():
             print(f"Processing {layer_name}...")
-            data_path = ETMapConfig.get_static_data_path(cfg['path_key'])
+            
+            # Pass year for NLCD, None for others
+            if layer_name == 'nlcd' and year is not None:
+                data_path = ETMapConfig.get_static_data_path(cfg['path_key'], year)
+            else:
+                data_path = ETMapConfig.get_static_data_path(cfg['path_key'])
 
             if not os.path.exists(data_path):
                 LoggingUtils.print_warning(f"File not found: {data_path}")
@@ -526,7 +531,7 @@ class DataCollector:
     """
 
     @staticmethod
-    def collect_sample_datasets() -> List[str]:
+    def collect_sample_datasets(year: int = None) -> List[str]:
         sample_paths: List[str] = []
 
         # Landsat B4 samples (limit count to keep cell size representative)
@@ -534,12 +539,20 @@ class DataCollector:
         if b4_files:
             sample_paths.extend(sorted(b4_files)[:3])
 
-        # Static data
-        for _, path in ETMapConfig.STATIC_DATA_PATHS.items():
+        # Static data - handle NLCD separately
+        for data_type, path in ETMapConfig.STATIC_DATA_PATHS.items():
+            if data_type == 'nlcd':
+                continue  # Skip NLCD here, add it separately with year
             if os.path.exists(path):
                 sample_paths.append(path)
+        
+        # Add NLCD with year
+        if year is not None:
+            nlcd_path = ETMapConfig.get_static_data_path('nlcd', year)
+            if os.path.exists(nlcd_path):
+                sample_paths.append(nlcd_path)
 
-        # Prefer a PRISM ppt sample (bounds are CONUS; cell size stable)
+        # Rest remains the same...
         if os.path.exists(ETMapConfig.PRISM_DIR):
             date_folders = [d for d in os.listdir(ETMapConfig.PRISM_DIR)
                             if os.path.isdir(os.path.join(ETMapConfig.PRISM_DIR, d))]
@@ -549,7 +562,6 @@ class DataCollector:
                     sample_paths.append(cand[0])
                     break
 
-        # NLDAS sample
         if os.path.exists(ETMapConfig.NLDAS_DIR):
             for date_folder in sorted(os.listdir(ETMapConfig.NLDAS_DIR)):
                 date_path = os.path.join(ETMapConfig.NLDAS_DIR, date_folder)

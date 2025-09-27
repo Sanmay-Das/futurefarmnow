@@ -88,6 +88,8 @@ class CompleteETMapProcessor:
 
             date_from = validated_data['date_info']['date_from']
             date_to = validated_data['date_info']['date_to']
+            year = int(date_from.split('-')[0]) 
+            print(f"DEBUG: Extracted year from date_from '{date_from}': {year}")
             geometry_info = validated_data['geometry_info']
             aoi_geometry = geometry_info['geometry']
 
@@ -103,7 +105,8 @@ class CompleteETMapProcessor:
 
             # Samples ➜ grid
             LoggingUtils.print_step_header("Collecting Sample Datasets")
-            sample_datasets = DataCollector.collect_sample_datasets()
+            # Samples with year
+            sample_datasets = DataCollector.collect_sample_datasets(year)
             if not sample_datasets:
                 LoggingUtils.print_error("No sample datasets found. Check your data paths.")
                 return False
@@ -120,7 +123,7 @@ class CompleteETMapProcessor:
             # STEP 1: Base aligned data
             LoggingUtils.print_step_header("STEP 1: Creating Basic Aligned Datasets")
             self.landsat_processor.process_landsat_data(aoi_metadata, output_base_path)
-            self.static_processor.process_static_data(aoi_metadata, output_base_path)
+            self.static_processor.process_static_data(aoi_metadata, output_base_path, year)
             self.prism_processor.process_prism_data_by_dates(aoi_metadata, date_from, date_to, output_base_path)
 
             # STEP 2: Hourly stacks
