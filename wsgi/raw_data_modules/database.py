@@ -3,23 +3,17 @@ import threading
 from .config import RawDataConfig
 
 class RawDataDatabase:
-    """
-    Database operations for raw data fetching jobs
-    """
-    
     def __init__(self):
         self.db_path = RawDataConfig.DB_PATH
         self._local = threading.local()
         self._initialize_db()
     
     def _get_connection(self):
-        """Get thread-local database connection"""
         if not hasattr(self._local, 'connection'):
             self._local.connection = sqlite3.connect(self.db_path, check_same_thread=False)
         return self._local.connection
     
     def _initialize_db(self):
-        """Initialize database tables"""
         connection = self._get_connection()
         cursor = connection.cursor()
         
@@ -40,7 +34,6 @@ class RawDataDatabase:
     
     def insert_job(self, request_id: str, date_from: str, date_to: str, 
                    geometry_json: str, status: str, request_json: str, created_at: str):
-        """Insert new job"""
         connection = self._get_connection()
         cursor = connection.cursor()
         
@@ -52,7 +45,6 @@ class RawDataDatabase:
         connection.commit()
     
     def update_job_status(self, request_id: str, status: str, updated_at: str, error_message: str = None):
-        """Update job status"""
         connection = self._get_connection()
         cursor = connection.cursor()
         
@@ -63,7 +55,6 @@ class RawDataDatabase:
         connection.commit()
     
     def find_existing_job(self, date_from: str, date_to: str):
-        """Find existing jobs"""
         connection = self._get_connection()
         cursor = connection.cursor()
         
@@ -74,7 +65,6 @@ class RawDataDatabase:
         return cursor.fetchall()
     
     def get_job(self, request_id: str):
-        """Get job details"""
         connection = self._get_connection()
         cursor = connection.cursor()
         

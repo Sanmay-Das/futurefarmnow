@@ -103,9 +103,7 @@ class CompleteETMapProcessor:
             aoi_geojson = os.path.join(output_base_path, "AOI/dynamic_aoi.geojson")
             GeospatialUtils.create_aoi_geojson(request_data['geometry'], aoi_geojson)
 
-            # Samples ➜ grid
             LoggingUtils.print_step_header("Collecting Sample Datasets")
-            # Samples with year
             sample_datasets = DataCollector.collect_sample_datasets(year)
             if not sample_datasets:
                 LoggingUtils.print_error("No sample datasets found. Check your data paths.")
@@ -116,17 +114,15 @@ class CompleteETMapProcessor:
 
             LoggingUtils.print_step_header("Clipping to AOI")
             aoi_metadata = self.grid_manager.clip_to_aoi(aoi_geometry)
-
-            # Persist metadata
             self._save_processing_metadata(request_data, aoi_metadata, output_base_path)
 
-            # STEP 1: Base aligned data
+            # Base aligned data
             LoggingUtils.print_step_header("STEP 1: Creating Basic Aligned Datasets")
             self.landsat_processor.process_landsat_data(aoi_metadata, output_base_path)
             self.static_processor.process_static_data(aoi_metadata, output_base_path, year)
             self.prism_processor.process_prism_data_by_dates(aoi_metadata, date_from, date_to, output_base_path)
 
-            # STEP 2: Hourly stacks
+            # Hourly stacks
             LoggingUtils.print_step_header("STEP 2: Creating Hourly Aligned Files")
             self._create_hourly_aligned_files(request_data, aoi_metadata, output_base_path)
 
@@ -160,36 +156,28 @@ class CompleteETMapProcessor:
         current_date = date_from
         total_hours_processed = 0
 
-        # Landsat output folder we’ll refresh per day to avoid cross-day reuse
         landsat_output_dir = ETMapConfig.get_output_path(os.path.basename(output_base_path), 'landsat')
         FileManager.ensure_directory_exists(landsat_output_dir)
 
         while current_date <= date_to:
             print(f"\n--- Processing Date: {current_date.strftime('%Y-%m-%d')} ---")
-
-            # 🔄 Ensure Landsat (NDVI/LAI) corresponds to *this* date
-            # Clean previous aligned Landsat outputs (avoid stale NDVI from another day)
             for fp in glob.glob(os.path.join(landsat_output_dir, "*.tif")):
                 try:
                     os.remove(fp)
                 except Exception:
                     pass
 
-            # Build aligned Landsat for the exact date (uses date-aware LandsatProcessor)
             self.landsat_processor.process_landsat_data(
                 aoi_metadata, output_base_path, target_date=current_date
             )
             landsat_data = self.landsat_processor.load_aligned_landsat_data(output_base_path)
 
-            # PRISM for this day (ppt already converted to mm/hr by the loader)
             prism_data = self.prism_processor.load_aligned_prism_data(output_base_path, current_date)
 
-            # NLDAS hourly files (aligned per hour)
             hourly_files = self.nldas_processor.find_nldas_hourly_files(current_date)
             if not hourly_files:
                 LoggingUtils.print_warning(f"No NLDAS hourly data found for {current_date.strftime('%Y-%m-%d')}")
-                hourly_files = [(h, None) for h in range(0, 24, 6)]  # placeholders
-
+                hourly_files = [(h, None) for h in range(0, 24, 6)] 
             for hour, nldas_file_path in hourly_files:
                 print(f"Processing Hour {hour:02d}")
 
@@ -225,25 +213,25 @@ class CompleteETMapProcessor:
         all_layers: List[np.ndarray] = []
         layer_names: List[str] = []
 
-        # 1. Static
+        # Static
         for var_name in ETMapConfig.BAND_ORDER['static']:
             if var_name in static_data:
                 all_layers.append(static_data[var_name])
                 layer_names.append(f"static_{var_name}")
 
-        # 2. PRISM (ppt is already converted to mm/hr in the loader)
+        # PRISM 
         for var_name in ETMapConfig.BAND_ORDER['prism']:
             if var_name in prism_data:
                 all_layers.append(prism_data[var_name])
                 layer_names.append(f"prism_{var_name}")
 
-        # 3. Landsat
+        # Landsat
         for var_name in ETMapConfig.BAND_ORDER['landsat']:
             if var_name in landsat_data:
                 all_layers.append(landsat_data[var_name])
                 layer_names.append(f"landsat_{var_name}")
 
-        # 4. NLDAS (temp/temperature, humidity, wind_speed, radiation)
+        # NLDAS 
         if nldas_data is not None and nldas_data.shape[0] >= 4:
             for i, var_name in enumerate(ETMapConfig.BAND_ORDER['nldas']):
                 if i < nldas_data.shape[0]:
@@ -254,7 +242,7 @@ class CompleteETMapProcessor:
             LoggingUtils.print_error("No data layers available")
             return False
 
-        # Harmonize shapes (should already match but keep safe)
+        # Harmonize shapes 
         target_shape = (height, width)
         aligned_layers = []
         for i, layer in enumerate(all_layers):
@@ -264,10 +252,9 @@ class CompleteETMapProcessor:
                 layer = ArrayUtils.resize_array_to_target(layer, target_shape)
             aligned_layers.append(layer.astype(np.float32))
 
-        # Optional: sanity check to match ETAlgorithm’s expected band count (11)
-        expected = 11  # 4 static + 1 prism + 2 landsat + 4 nldas
+        expected = 11  
         if len(aligned_layers) != expected:
-            print(f"    ⚠️ Band count is {len(aligned_layers)} (expected {expected}). "
+            print(f"    Band count is {len(aligned_layers)} (expected {expected}). "
                   f"Missing inputs will be defaulted by ETAlgorithm, but results may differ.")
 
         output_filename = f"{date.strftime('%Y-%m-%d')}_{hour:02d}.tif"

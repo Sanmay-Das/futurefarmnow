@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-ETMap Data Processors Module
-Handles processing of different data types (NLDAS, Landsat, PRISM, Static)
-"""
-
 import os
 import glob
 import numpy as np
@@ -12,27 +6,21 @@ from rasterio.warp import Resampling, reproject
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime, timedelta
 import re
-
 from .config import ETMapConfig
 from .utils import FileManager, ArrayUtils, LoggingUtils
 from .grid_manager import UnifiedGridManager
 
 
 class NLDASProcessor:
-    """
-    Process NLDAS hourly data for ET calculations
-    """
-
     def __init__(self, nldas_base_path: str = None):
         self.nldas_base_path = nldas_base_path or ETMapConfig.NLDAS_DIR
 
     def find_nldas_hourly_files(self, date: datetime) -> List[Tuple[int, str]]:
-        """
-        Find all hourly NLDAS files for a given date
-        Returns: List of (hour, filepath)
-        """
         date_str = date.strftime('%Y-%m-%d')
-        date_folder = os.path.join(self.nldas_base_path, date_str)
+        # Support both flat and year-nested layouts:
+        direct = os.path.join(self.nldas_base_path, date_str)
+        nested = os.path.join(self.nldas_base_path, str(date.year), date_str)
+        date_folder = direct if os.path.isdir(direct) else nested
 
         hourly_files: List[Tuple[int, str]] = []
 
@@ -58,7 +46,6 @@ class NLDASProcessor:
         return hourly_files
 
     def _parse_hour_from_filename(self, filename: str) -> Optional[int]:
-        """Support several common NLDAS naming patterns"""
         hour = None
 
         # Pattern 1: NLDAS_FORA_20240329_2300.tif
@@ -84,34 +71,26 @@ class NLDASProcessor:
         return None
 
     def load_nldas_data(self, file_path: str) -> Optional[np.ndarray]:
-        """
-        Load NLDAS data and extract relevant variables (returns °C, RH[0-1], m/s, W/m²)
-        """
         try:
             with rasterio.open(file_path) as src:
                 data = src.read().astype(np.float32)
 
                 if data.shape[0] >= 5:
-                    # Typical band usage (adjust if your file order differs)
-                    temp = data[0]          # Air temperature (often Kelvin)
-                    humidity_in = data[1]   # Specific humidity q (kg/kg) OR RH
-                    u_wind = data[3]        # U wind component (m/s)
-                    v_wind = data[4]        # V wind component (m/s)
+                    temp = data[0]          
+                    humidity_in = data[1]  
+                    u_wind = data[3]        
+                    v_wind = data[4]       
                     radiation = data[5] if data.shape[0] > 5 else np.zeros_like(temp)
 
-                    # Kelvin → °C (heuristic)
                     temp_c = temp - 273.15 if np.nanmedian(temp) > 100 else temp
 
-                    # Humidity: convert q → RH if it looks like specific humidity
-                    # (q typically < 0.03)
                     if np.nanmax(humidity_in) < 0.2:
                         q = np.clip(humidity_in, 0.0, 0.05)
-                        p_kpa = 101.3  # fallback; BAITSSS also re-checks w/ elevation
+                        p_kpa = 101.3  
                         es = 0.611 * np.exp((17.27 * temp_c) / (temp_c + 237.3))
                         e = (q * p_kpa) / (0.622 + 0.378 * q)
                         rh = np.clip(e / es, 0.01, 1.0)
                     else:
-                        # already RH (0–1) or percentage (0–100)
                         rh = humidity_in / 100.0 if np.nanmax(humidity_in) > 1.0 else humidity_in
                         rh = np.clip(rh, 0.01, 1.0)
 
@@ -129,10 +108,6 @@ class NLDASProcessor:
         
     # --- New: preferred path – reproject to AOI grid using the source georeferencing ---
     def align_nldas_file_to_grid(self, file_path: str, aoi_metadata: Dict) -> Optional[np.ndarray]:
-        """
-        Read NLDAS from disk and reproject onto the AOI grid (CRS+transform) like Scala does.
-        Returns a stack [temp, specific_humidity, wind_speed, shortwave] aligned to (H, W).
-        """
         try:
             with rasterio.open(file_path) as src:
                 data = src.read()
@@ -179,7 +154,7 @@ class NLDASProcessor:
             LoggingUtils.print_error(f"Error aligning NLDAS {file_path}: {e}")
             return None
 
-    # Kept for backwards-compat: simple resize (no reprojection). Prefer method above.
+    
     def align_nldas_to_grid(self, nldas_data: np.ndarray, aoi_metadata: Dict) -> np.ndarray:
         target_shape = (aoi_metadata['height'], aoi_metadata['width'])
         aligned_bands = [ArrayUtils.resize_array_to_target(nldas_data[i], target_shape)
@@ -188,18 +163,6 @@ class NLDASProcessor:
 
 
 class LandsatProcessor:
-    """
-    Process Landsat data (B4, B5) and calculate NDVI/LAI.
-
-    With target_date:
-      - Prefer exact date from local cache.
-      - If missing locally (because the fetcher chose a nearby date), fall back to the nearest
-        *local* date within ±LANDSAT_NEAREST_DAY_WINDOW (tie → newer). No server calls.
-
-    Without target_date:
-      - Pair whatever is available locally (legacy behavior).
-    """
-
     def __init__(self, grid_manager: UnifiedGridManager):
         self.grid_manager = grid_manager
         self.nearest_day_window = getattr(ETMapConfig, "LANDSAT_NEAREST_DAY_WINDOW", 45)
@@ -244,7 +207,6 @@ class LandsatProcessor:
 
         return None, []
 
-    # --------------------------- main --------------------------
     def process_landsat_data(
         self,
         aoi_metadata: Dict,
@@ -276,7 +238,7 @@ class LandsatProcessor:
 
             print(f"Found {len(pairs)} Landsat B4/B5 pairs for {used_date_str}")
             if used_date_str != target_date.strftime("%Y-%m-%d"):
-                print(f"   ℹ️ Using nearest local date {used_date_str} (requested {target_date.strftime('%Y-%m-%d')})")
+                print(f"    Using nearest local date {used_date_str} (requested {target_date.strftime('%Y-%m-%d')})")
 
         else:
             # Legacy: pair everything available locally (no date filter)
@@ -320,13 +282,11 @@ class LandsatProcessor:
         LoggingUtils.print_success(f"Processed {processed_count} Landsat scenes")
 
     def _calculate_ndvi_file(self, b4_path: str, b5_path: str, ndvi_path: str):
-        """Calculate NDVI; auto-apply L2 scale factors if DN detected."""
         try:
             with rasterio.open(b4_path) as b4_src, rasterio.open(b5_path) as b5_src:
                 b4 = b4_src.read(1).astype(np.float32)
                 b5 = b5_src.read(1).astype(np.float32)
 
-                # If values look like DN, apply L2 scale/offset (USGS L2)
                 if np.nanmax(b4) > 1.5 or np.nanmax(b5) > 1.5:
                     b4 = b4 * 0.0000275 - 0.2
                     b5 = b5 * 0.0000275 - 0.2
@@ -363,10 +323,6 @@ class LandsatProcessor:
         return landsat_data
 
 class PRISMProcessor:
-    """
-    Process PRISM daily climate data
-    """
-
     def __init__(self, grid_manager: UnifiedGridManager):
         self.grid_manager = grid_manager
 
@@ -410,9 +366,6 @@ class PRISMProcessor:
         LoggingUtils.print_success(f"Processed {processed_count}/{total_files} PRISM files")
 
     def load_aligned_prism_data(self, output_base_path: str, date: datetime) -> Dict[str, np.ndarray]:
-        """
-        Loads daily PRISM and converts precipitation from mm/day → mm/hour
-        """
         prism_data = {}
         date_str = date.strftime('%Y_%m_%d')
         prism_date_folder = ETMapConfig.get_output_path(
@@ -439,7 +392,6 @@ class PRISMProcessor:
                         with rasterio.open(file_path) as src:
                             arr = src.read(1).astype(np.float32)
                             if var_name == 'precipitation':
-                                # PRISM ppt is daily total (mm/day) → convert to mm/hour
                                 arr = arr / 24.0
                             prism_data[var_name] = arr
                     except Exception as e:
@@ -465,10 +417,6 @@ class PRISMProcessor:
 
 
 class StaticDataProcessor:
-    """
-    Process static layers (elevation, soil, NLCD)
-    """
-
     def __init__(self, grid_manager: UnifiedGridManager):
         self.grid_manager = grid_manager
 
@@ -483,6 +431,9 @@ class StaticDataProcessor:
             
             # Pass year for NLCD, None for others
             if layer_name == 'nlcd' and year is not None:
+                data_path = ETMapConfig.get_static_data_path(cfg['path_key'], year)
+            elif layer_name == 'elevation' and year is not None:
+                # Optional year-aware elevation fallback (closest if multiple vintages exist)
                 data_path = ETMapConfig.get_static_data_path(cfg['path_key'], year)
             else:
                 data_path = ETMapConfig.get_static_data_path(cfg['path_key'])
@@ -526,15 +477,11 @@ class StaticDataProcessor:
 
 
 class DataCollector:
-    """
-    Collects sample datasets for grid computation
-    """
-
     @staticmethod
     def collect_sample_datasets(year: int = None) -> List[str]:
         sample_paths: List[str] = []
 
-        # Landsat B4 samples (limit count to keep cell size representative)
+        # Landsat B4 samples 
         b4_files = glob.glob(os.path.join(ETMapConfig.LANDSAT_B4_DIR, "*.tif"))
         if b4_files:
             sample_paths.extend(sorted(b4_files)[:3])
@@ -542,7 +489,7 @@ class DataCollector:
         # Static data - handle NLCD separately
         for data_type, path in ETMapConfig.STATIC_DATA_PATHS.items():
             if data_type == 'nlcd':
-                continue  # Skip NLCD here, add it separately with year
+                continue  
             if os.path.exists(path):
                 sample_paths.append(path)
         
@@ -552,7 +499,6 @@ class DataCollector:
             if os.path.exists(nlcd_path):
                 sample_paths.append(nlcd_path)
 
-        # Rest remains the same...
         if os.path.exists(ETMapConfig.PRISM_DIR):
             date_folders = [d for d in os.listdir(ETMapConfig.PRISM_DIR)
                             if os.path.isdir(os.path.join(ETMapConfig.PRISM_DIR, d))]

@@ -1,15 +1,15 @@
 import json
 import re
 from typing import Dict
+from datetime import datetime
+from shapely.geometry import shape
+        
 
 
 class CurlCommandParser:
     @staticmethod
     def parse_curl_command(curl_command: str) -> Dict:
         print("Parsing curl command...")
-        
-        # Extract JSON payload from curl command
-        # Look for -d followed by JSON content
         json_match = re.search(r"-d\s+['\"]({.*?})['\"]", curl_command, re.DOTALL)
         
         if not json_match:
@@ -18,8 +18,7 @@ class CurlCommandParser:
         json_str = json_match.group(1)
         
         try:
-            # Clean up the JSON string (remove extra spaces, fix formatting)
-            json_str = re.sub(r'\s+', ' ', json_str)  # Normalize whitespace
+            json_str = re.sub(r'\s+', ' ', json_str)  
             parsed_data = json.loads(json_str)
             
             print(f"✓ Successfully parsed curl command")
@@ -40,7 +39,6 @@ class CurlCommandParser:
                 print(f"✗ Missing required field: {field}")
                 return False
         
-        # Validate geometry
         geometry = data.get('geometry', {})
         if 'type' not in geometry or 'coordinates' not in geometry:
             print("✗ Invalid geometry structure")
@@ -51,7 +49,6 @@ class CurlCommandParser:
     
     @staticmethod
     def extract_url_from_curl(curl_command: str) -> str:
-        # Look for URL after curl command, handling -X POST pattern
         # Pattern 1: curl -X POST http://... 
         url_match = re.search(r'curl\s+(?:-X\s+\w+\s+)?(https?://[^\s]+)', curl_command)
         
@@ -76,7 +73,6 @@ class CurlCommandParser:
     def extract_headers_from_curl(curl_command: str) -> Dict[str, str]:
         headers = {}
         
-        # Find all -H "header: value" patterns
         header_matches = re.findall(r'-H\s+["\']([^:]+):\s*([^"\']+)["\']', curl_command)
         
         for header_name, header_value in header_matches:
@@ -88,7 +84,6 @@ class CurlCommandParser:
 class RequestDataParser:
     @staticmethod
     def parse_date_range(date_from: str, date_to: str) -> Dict:
-        from datetime import datetime
         
         try:
             start_date = datetime.fromisoformat(date_from)
@@ -112,12 +107,10 @@ class RequestDataParser:
     
     @staticmethod
     def parse_geometry(geometry_dict: Dict) -> Dict:
-        from shapely.geometry import shape
-        
         try:
             geometry = shape(geometry_dict)
             bounds = geometry.bounds
-            area_km2 = geometry.area * 111000 * 111000  # Rough conversion to km²
+            area_km2 = geometry.area * 111000 * 111000  
             
             return {
                 'geometry': geometry,
@@ -131,13 +124,11 @@ class RequestDataParser:
     
     @staticmethod
     def validate_request_data(request_data: Dict) -> Dict:
-        # Validate required fields
         required_fields = ['date_from', 'date_to', 'geometry']
         for field in required_fields:
             if field not in request_data:
                 raise ValueError(f"Missing required field: {field}")
         
-        # Parse components
         date_info = RequestDataParser.parse_date_range(
             request_data['date_from'], 
             request_data['date_to']

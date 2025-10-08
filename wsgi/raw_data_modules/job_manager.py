@@ -6,7 +6,6 @@ from .database import RawDataDatabase
 
 class JobStatus(Enum):
     """Job status enumeration"""
-    # Data collection statuses
     QUEUED = "queued"
     CHECKING_COVERAGE = "checking_coverage"
     LANDSAT_STARTED = "landsat_started"
@@ -22,25 +21,18 @@ class JobStatus(Enum):
     NLDAS_ERROR = "nldas_error"
     NLDAS_SKIPPED = "nldas_skipped_covered"
     
-    # Data collection complete
     SUCCESS = "success"
     FAILED = "failed"
     
-    # ET calculation statuses
     CALCULATION_STARTED = "calculation_started"
     CALCULATION_COMPLETE = "calculation_complete"
     CALCULATION_FAILED = "calculation_failed"
 
 class RawDataJobManager:
-    """
-    Manages raw data fetching job lifecycle
-    """
-    
     def __init__(self, database: RawDataDatabase):
         self.db = database
     
     def create_job(self, request_data: dict) -> str:
-        """Create new job"""
         request_id = str(uuid.uuid4())
         current_timestamp = datetime.utcnow().isoformat()
         
@@ -57,7 +49,6 @@ class RawDataJobManager:
         return request_id
     
     def find_existing_job(self, date_from: str, date_to: str, geometry: dict) -> str:
-        """Find existing job with same parameters"""
         existing_jobs = self.db.find_existing_job(date_from, date_to)
         
         for existing_request_id, existing_request_json in existing_jobs:
@@ -68,12 +59,10 @@ class RawDataJobManager:
         return None
     
     def update_status(self, request_id: str, status: JobStatus, error_message: str = None):
-        """Update job status"""
         updated_at = datetime.utcnow().isoformat()
         self.db.update_job_status(request_id, status.value, updated_at, error_message)
     
     def get_job_status(self, request_id: str) -> dict:
-        """Get job status"""
         job_data = self.db.get_job(request_id)
         if not job_data:
             return None

@@ -1,13 +1,3 @@
-#!/usr/bin/env python3
-"""
-ETMap Grid Manager Module
-Handles unified grid computation and raster alignment
-
-Updates vs previous version:
-- AOI clipping now snaps to pixel grid exactly (Scala-like modelToGrid → gridToModel).
-- Reprojection fills with dst_nodata and preserves nodata through src_nodata/dst_nodata.
-"""
-
 import os
 import numpy as np
 import rasterio
@@ -27,10 +17,6 @@ from .utils import LoggingUtils
 
 
 class UnifiedGridManager:
-    """
-    Manages unified grid computation and alignment for all datasets.
-    Mirrors Scala Raster_metadata / AOI_metadata semantics.
-    """
 
     def __init__(self, target_crs: str = None):
         self.target_crs = target_crs or ETMapConfig.TARGET_CRS
@@ -42,17 +28,8 @@ class UnifiedGridManager:
         sample_datasets: List[str],
         aoi_crs: str = "EPSG:4326",
     ) -> Dict:
-        """
-        Compute unified grid covering AOI + all input datasets.
-        Equivalent to Scala's Raster_metadata function.
-
-        Returns:
-            Grid metadata dictionary:
-              { crs, transform, width, height, bounds, cell_size, valid_datasets_count }
-        """
         LoggingUtils.print_step_header("Computing Unified Grid Metadata")
 
-        # Init global bounds/cellsize trackers
         min_x = float("inf")
         max_x = float("-inf")
         min_y = float("inf")
@@ -60,7 +37,6 @@ class UnifiedGridManager:
         min_cell_x = float("inf")
         min_cell_y = float("inf")
 
-        # AOI bounds (to target CRS)
         if aoi_crs != self.target_crs:
             try:
                 aoi_bounds_geometry = transform_geom(aoi_crs, self.target_crs, mapping(aoi_geometry))
@@ -77,7 +53,6 @@ class UnifiedGridManager:
         max_x = max(max_x, aoi_bounds[2])
         max_y = max(max_y, aoi_bounds[3])
 
-        # Scan sample datasets to expand bounds and find smallest cell size
         valid_datasets_count = 0
         target_crs_obj = CRS.from_string(self.target_crs)
 
@@ -91,7 +66,6 @@ class UnifiedGridManager:
                     bounds = src.bounds
 
                     if src_crs and src_crs != target_crs_obj:
-                        # Transform envelope to target CRS (corner-wise)
                         corners = [
                             (bounds.left, bounds.bottom),
                             (bounds.right, bounds.bottom),
@@ -104,28 +78,22 @@ class UnifiedGridManager:
                         bminx, bmaxx = min(xs), max(xs)
                         bminy, bmaxy = min(ys), max(ys)
 
-                        # What would the pixel size be if reprojected?
                         _, dst_w, dst_h = calculate_default_transform(
                             src_crs, target_crs_obj, src.width, src.height, *bounds
                         )
-                        # Derive nominal cell size from projected envelope / dims
-                        # Guard divide-by-zero
                         cell_x = abs((bmaxx - bminx) / max(dst_w, 1))
                         cell_y = abs((bmaxy - bminy) / max(dst_h, 1))
                     else:
                         bminx, bminy = bounds.left, bounds.bottom
                         bmaxx, bmaxy = bounds.right, bounds.top
-                        # For geographic transforms, src.transform.a>0, src.transform.e<0 typically
                         cell_x = abs(src.transform.a)
                         cell_y = abs(src.transform.e)
 
-                    # Expand global envelope
                     min_x = min(min_x, bminx)
                     min_y = min(min_y, bminy)
                     max_x = max(max_x, bmaxx)
                     max_y = max(max_y, bmaxy)
 
-                    # Track finest resolution
                     min_cell_x = min(min_cell_x, cell_x)
                     min_cell_y = min(min_cell_y, cell_y)
 
@@ -135,18 +103,15 @@ class UnifiedGridManager:
                 LoggingUtils.print_warning(f"Could not read {dataset_path}: {e}")
                 continue
 
-        # Fallback resolution if nothing valid was read
         if valid_datasets_count == 0 or not np.isfinite(min_cell_x) or not np.isfinite(min_cell_y):
             min_cell_x = min_cell_y = ETMapConfig.DEFAULT_CELL_SIZE
             LoggingUtils.print_warning("No valid sample datasets; using default 30m resolution (deg-equivalent)")
 
-        # Build grid dims & transform
         grid_width = int(np.floor(abs(max_x - min_x) / max(min_cell_x, 1e-12)))
         grid_height = int(np.floor(abs(max_y - min_y) / max(min_cell_y, 1e-12)))
         grid_width = max(grid_width, 1)
         grid_height = max(grid_height, 1)
 
-        # Standard north-up transform (x from left, y from top)
         grid_transform = Affine(min_cell_x, 0.0, min_x, 0.0, -min_cell_y, max_y)
 
         self.grid_metadata = {
@@ -168,10 +133,6 @@ class UnifiedGridManager:
         return self.grid_metadata
 
     def clip_to_aoi(self, aoi_geometry, aoi_crs: str = "EPSG:4326") -> Dict:
-        """
-        Refine grid to AOI bounds and SNAP to pixel grid.
-        Equivalent to Scala's AOI_metadata (modelToGrid → clamp → gridToModel).
-        """
         if not self.grid_metadata:
             raise ValueError("Must compute unified grid first")
 
@@ -195,11 +156,9 @@ class UnifiedGridManager:
         maxx = min(aoi_bounds[2], gmaxx)
         maxy = min(aoi_bounds[3], gmaxy)
 
-        # SNAP to grid
         gt: Affine = self.grid_metadata["transform"]
-        cell_x, cell_y = self.grid_metadata["cell_size"]  # both positive
+        cell_x, cell_y = self.grid_metadata["cell_size"]  
 
-        # modelToGrid (i,j) index space
         i1 = max(0, int(np.floor((minx - gt.c) / cell_x)))
         i2 = min(self.grid_metadata["width"], int(np.ceil((maxx - gt.c) / cell_x)))
         j1 = max(0, int(np.floor((gt.f - maxy) / cell_y)))
@@ -208,11 +167,10 @@ class UnifiedGridManager:
         clipped_width = max(i2 - i1, 1)
         clipped_height = max(j2 - j1, 1)
 
-        # gridToModel back to exact pixel-aligned bounds
         x1 = gt.c + i1 * cell_x
         x2 = gt.c + i2 * cell_x
-        y2 = gt.f - j1 * cell_y  # top
-        y1 = gt.f - j2 * cell_y  # bottom
+        y2 = gt.f - j1 * cell_y  
+        y1 = gt.f - j2 * cell_y  
 
         clipped_transform = Affine(cell_x, 0.0, x1, 0.0, -cell_y, y2)
 
@@ -238,14 +196,6 @@ class UnifiedGridManager:
         grid_metadata: Dict,
         resampling_method=Resampling.nearest,
     ) -> bool:
-        """
-        Align a single raster to the unified grid.
-        Equivalent to Scala's RasterOperationsFocal.reshapeNN.
-
-        NoData handling:
-          - Destination prefilled with -9999
-          - Passes src_nodata and dst_nodata to reproject
-        """
         try:
             with rasterio.open(source_path) as src:
                 print(f"Aligning {os.path.basename(source_path)} to unified grid...")
@@ -253,12 +203,10 @@ class UnifiedGridManager:
                 H, W = grid_metadata["height"], grid_metadata["width"]
                 dst_nodata = -9999.0
 
-                # Prepare destination array (float32 for consistency across bands)
                 out = np.full((src.count, H, W), dst_nodata, dtype=np.float32)
 
                 # Reproject each band
                 for b in range(1, src.count + 1):
-                    # Read source as float32 to avoid dtype surprises
                     src_band = rasterio.band(src, b)
                     reproject(
                         source=src_band,
@@ -300,13 +248,9 @@ class UnifiedGridManager:
 
 
 class RasterProcessor:
-    """
-    Additional raster processing utilities
-    """
 
     @staticmethod
     def get_raster_info(raster_path: str) -> Dict:
-        """Get basic information about a raster file"""
         try:
             with rasterio.open(raster_path) as src:
                 return {
@@ -325,9 +269,6 @@ class RasterProcessor:
 
     @staticmethod
     def validate_raster_alignment(raster_paths: List[str]) -> bool:
-        """
-        Check if multiple rasters are aligned (same grid)
-        """
         if len(raster_paths) < 2:
             return True
 

@@ -13,12 +13,10 @@ class ETMapConfig:
     """
     
     # Base paths
-    BASE_DIR = os.path.dirname(__file__)
-    DATA_BASE_PATH = "/Users/EndUser/FutureFarm-Summer-Project/futurefarmnow/wsgi/ETmap_data"
-    RESULTS_BASE_PATH = "/Users/EndUser/FutureFarm-Summer-Project/futurefarmnow/wsgi/results"
-    
-    # Database configuration
-    DB_PATH = os.path.join(os.getcwd(), 'etmap.db')  # Database in current working directory (wsgi folder)
+    REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    DATA_BASE_PATH = os.environ.get("ETMAP_DATA_DIR", os.path.join(REPO_ROOT, "ETmap_data"))    
+    RESULTS_BASE_PATH = os.environ.get("ETMAP_RESULTS_DIR",os.path.join(REPO_ROOT, "results"))
+    DB_PATH = os.environ.get("ETMAP_DB_PATH",os.path.join(REPO_ROOT, "etmap.db"))    
     
     # Data source paths
     LANDSAT_B4_DIR = os.path.join(DATA_BASE_PATH, 'Landsat_B4')
@@ -34,12 +32,13 @@ class ETMapConfig:
         'nlcd': os.path.join(DATA_BASE_PATH, 'NLCD/Annual_NLCD_LndCov_{year}_CU_C1V1/Annual_NLCD_LndCov_{year}_CU_C1V1.tif')
     }
     
-    # Available NLCD years (just list the years you have)
+    # Available years
     AVAILABLE_NLCD_YEARS = [2019, 2024]
+    AVAILABLE_ELEVATION_YEARS = [2020]
 
     # Processing configuration
     TARGET_CRS = 'EPSG:4326'
-    DEFAULT_CELL_SIZE = 0.0002778  # ~30m at equator (Landsat resolution)
+    DEFAULT_CELL_SIZE = 0.0002778 
     MAX_LANDSAT_SCENES = 10
     
     # PRISM variables
@@ -80,9 +79,9 @@ class ETMapConfig:
     
     # Band ordering for hourly files
     BAND_ORDER = {
-    'static': ['soil_awc', 'soil_fc', 'nlcd', 'elevation'],  # <- swap nlcd/elevation
+    'static': ['soil_awc', 'soil_fc', 'nlcd', 'elevation'],  
     'prism': ['precipitation'],
-    'nldas': ['temperature', 'humidity', 'wind_speed', 'radiation'],  # <- rename temp
+    'nldas': ['temperature', 'humidity', 'wind_speed', 'radiation'],  
     'landsat': ['ndvi', 'lai']
     }
     
@@ -128,11 +127,17 @@ class ETMapConfig:
             nlcd_path = f'NLCD/Annual_NLCD_LndCov_{year}_CU_C1V1/Annual_NLCD_LndCov_{year}_CU_C1V1.tif'
             return os.path.join(cls.DATA_BASE_PATH, nlcd_path)
         
+        elif data_type == 'elevation':
+            if year is not None and cls.AVAILABLE_ELEVATION_YEARS:
+                used_year = min(cls.AVAILABLE_ELEVATION_YEARS, key=lambda x: abs(x - year))
+                base = os.path.join(cls.DATA_BASE_PATH, 'LF2020_Elev_220_CONUS', 'tif', 'LC20_Elev_220.tif')
+                return base if os.path.exists(base) else cls.STATIC_DATA_PATHS.get('elevation', '')
+
+
         return cls.STATIC_DATA_PATHS.get(data_type, '')
     
     @classmethod
     def get_output_path(cls, request_id: str, folder_type: str = None) -> str:
-        """Get output path for a request"""
         base_path = os.path.join(cls.RESULTS_BASE_PATH, request_id)
         
         if folder_type and folder_type in cls.OUTPUT_FOLDERS:

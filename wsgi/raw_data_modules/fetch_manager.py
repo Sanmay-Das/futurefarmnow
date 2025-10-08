@@ -2,21 +2,13 @@ from typing import Dict
 from .data_fetchers import BaseFetcher
 
 class DataFetchManager:
-    """
-    Manages data fetching across multiple datasets
-    """
-    
     def __init__(self):
         self.fetchers: Dict[str, BaseFetcher] = {}
     
     def register_fetcher(self, dataset_name: str, fetcher: BaseFetcher):
-        """Register a fetcher for a dataset"""
         self.fetchers[dataset_name] = fetcher
     
     def fetch_dataset(self, dataset_name: str, date_from: str, date_to: str, geometry_json: str = None) -> bool:
-        """
-        Fetch data for a specific dataset
-        """
         if dataset_name not in self.fetchers:
             print(f"No fetcher registered for dataset: {dataset_name}")
             return False
@@ -39,15 +31,13 @@ class DataFetchManager:
             return False
     
     def get_registered_datasets(self) -> list:
-        """Get list of registered dataset names"""
         return list(self.fetchers.keys())
     
     def is_dataset_registered(self, dataset_name: str) -> bool:
-        """Check if a dataset fetcher is registered"""
         return dataset_name in self.fetchers
     
     def unregister_fetcher(self, dataset_name: str) -> bool:
-        """Unregister a fetcher (useful for testing)"""
+        """Unregister a fetcher for testing"""
         if dataset_name in self.fetchers:
             del self.fetchers[dataset_name]
             print(f"Unregistered {dataset_name} fetcher")

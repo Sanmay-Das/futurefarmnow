@@ -6,10 +6,9 @@ import threading
 import sqlite3
 import subprocess
 from datetime import datetime
+from etmap_modules.config import ETMapConfig
 from enum import Enum
 from flask import Blueprint, request, jsonify, send_file, redirect, url_for
-
-# Import modular components from raw_data_modules
 from raw_data_modules.config import RawDataConfig
 from raw_data_modules.database import RawDataDatabase
 from raw_data_modules.job_manager import RawDataJobManager, JobStatus
@@ -18,30 +17,22 @@ from raw_data_modules.data_fetchers import LandsatFetcher, PRISMFetcher, NLDASFe
 from raw_data_modules.fetch_manager import DataFetchManager
 from raw_data_modules.utils import RawDataUtils
 
-# Blueprint for raw data fetching (can be imported as etrawdata_bp in server.py)
 etrawdata_bp = Blueprint('etrawdata', __name__)
 
-# Initialize modular components
 db = RawDataDatabase()
 job_manager = RawDataJobManager(db)
 coverage_checker = SpatialCoverageChecker()
 
-# Initialize fetch manager and fetchers
 fetch_manager = DataFetchManager()
 fetch_manager.register_fetcher('landsat', LandsatFetcher())
 fetch_manager.register_fetcher('prism', PRISMFetcher())
 fetch_manager.register_fetcher('nldas', NLDASFetcher())
 
-# Configuration for automatic calculation
 AUTO_CALCULATION_ENABLED = True
-# Use absolute path based on the server script location
 ETCALCULATION_SCRIPT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ETCalculation.py")
 
 @etrawdata_bp.route('/etmap', methods=['POST'])
 def create_etmap_request():
-    """
-    Create a new ETMap data collection request
-    """
     request_data = request.get_json(silent=True)
     if not request_data:
         return jsonify({'error': 'Invalid JSON payload'}), 400
@@ -52,7 +43,6 @@ def create_etmap_request():
         if field not in request_data:
             return jsonify({'error': f'Missing required field: {field}'}), 400
     
-    # Validate geometry
     try:
         RawDataUtils.validate_geometry(request_data['geometry'])
     except Exception as e:
@@ -77,7 +67,6 @@ def create_etmap_request():
         
         return jsonify({'request_id': existing_request_id}), 200
 
-    # Create new job
     request_id = job_manager.create_job(request_data)
     
     # Start data collection in background thread
@@ -91,9 +80,6 @@ def create_etmap_request():
 
 @etrawdata_bp.route('/etmap/<string:request_id>.json', methods=['GET'])
 def get_etmap_status(request_id: str):
-    """
-    Get the status of an ETMap data collection request
-    """
     try:
         uuid.UUID(request_id)
     except ValueError:
@@ -107,9 +93,6 @@ def get_etmap_status(request_id: str):
 
 @etrawdata_bp.route('/etmap/<string:request_id>/result', methods=['GET'])
 def get_etmap_result(request_id: str):
-    """
-    Get the result of a completed ETMap request
-    """
     try:
         uuid.UUID(request_id)
     except ValueError:
@@ -137,9 +120,6 @@ def get_etmap_result(request_id: str):
 
 @etrawdata_bp.route('/etmap/<string:request_id>.png', methods=['GET'])
 def get_et_map_image(request_id: str):
-    """
-    Serve the ET map PNG for a completed request
-    """
     try:
         uuid.UUID(request_id)
     except ValueError:
@@ -155,7 +135,6 @@ def get_et_map_image(request_id: str):
         return jsonify({'error': 'ET calculation not completed yet', 'current_status': job_status}), 400
     
     # Construct path to ET result PNG
-    from etmap_modules.config import ETMapConfig
     output_path = ETMapConfig.get_output_path(request_id)
     et_png_path = os.path.join(output_path, 'et_enhanced', 'ET_final_result.png')
     
@@ -177,9 +156,6 @@ def get_et_map_image(request_id: str):
     
 @etrawdata_bp.route('/etmap/<string:request_id>.tif', methods=['GET'])
 def get_et_map_tiff(request_id: str):
-    """
-    Serve the ET map TIFF for a completed request
-    """
     try:
         uuid.UUID(request_id)
     except ValueError:
@@ -216,9 +192,6 @@ def get_et_map_tiff(request_id: str):
 
 
 def execute_data_collection(request_id: str, request_data: dict):
-    """
-    Execute data collection with spatial coverage checking and automatic calculation trigger
-    """
     print(f"Starting data collection for request {request_id}")
     
     try:
@@ -226,11 +199,10 @@ def execute_data_collection(request_id: str, request_data: dict):
         date_to = request_data['date_to']
         geometry_json = json.dumps(request_data['geometry'])
         
-        # Parse AOI
         area_of_interest = RawDataUtils.parse_geometry(geometry_json)
         print(f"AOI bounds: {area_of_interest.bounds}")
         
-        # Step 1: Check spatial coverage
+        # Check spatial coverage
         job_manager.update_status(request_id, JobStatus.CHECKING_COVERAGE)
         
         datasets_to_fetch = []
@@ -256,7 +228,7 @@ def execute_data_collection(request_id: str, request_data: dict):
             print("NLDAS data already covered - skipping download")
             job_manager.update_status(request_id, JobStatus.NLDAS_SKIPPED)
         
-        # Step 2: Execute needed collections
+        # Execute needed collections
         if not datasets_to_fetch:
             print("All data already available locally - no fetching needed!")
             job_manager.update_status(request_id, JobStatus.SUCCESS)
@@ -284,7 +256,6 @@ def execute_data_collection(request_id: str, request_data: dict):
                 success = fetch_manager.fetch_dataset(dataset, date_from, date_to, geometry_json)
                 
                 if success:
-                    # Update status to done
                     if dataset == 'landsat':
                         job_manager.update_status(request_id, JobStatus.LANDSAT_DONE)
                     elif dataset == 'prism':
@@ -294,7 +265,6 @@ def execute_data_collection(request_id: str, request_data: dict):
                     
                     print(f" Completed {dataset} raw data collection")
                 else:
-                    # Update status to error
                     if dataset == 'landsat':
                         job_manager.update_status(request_id, JobStatus.LANDSAT_ERROR, f"{dataset} fetch failed")
                     elif dataset == 'prism':
@@ -307,7 +277,7 @@ def execute_data_collection(request_id: str, request_data: dict):
                     return
                     
             except Exception as e:
-                print(f"✗ {dataset} job failed with exception: {e}")
+                print(f" {dataset} job failed with exception: {e}")
                 if dataset == 'landsat':
                     job_manager.update_status(request_id, JobStatus.LANDSAT_ERROR, str(e))
                 elif dataset == 'prism':
@@ -318,11 +288,10 @@ def execute_data_collection(request_id: str, request_data: dict):
                 job_manager.update_status(request_id, JobStatus.FAILED, f"{dataset}: {str(e)}")
                 return
         
-        # Mark data collection as successful
         job_manager.update_status(request_id, JobStatus.SUCCESS)
         print(f"Data collection completed for request {request_id}")
         
-        # Step 3: Trigger automatic calculation
+        # Trigger automatic calculation
         if AUTO_CALCULATION_ENABLED:
             print(f"Triggering automatic ET calculation for request {request_id}")
             trigger_automatic_calculation(request_id)
@@ -335,24 +304,18 @@ def execute_data_collection(request_id: str, request_data: dict):
         job_manager.update_status(request_id, JobStatus.FAILED, str(e))
 
 def trigger_automatic_calculation(request_id: str):
-    """
-    Trigger the ETCalculation.py script automatically as a separate process with output capture
-    """
     try:
         print(f"[AUTO-CALC] Starting automatic calculation for UUID: {request_id}")
         
-        #  ADD THIS: Update status to calculation started
         job_manager.update_status(request_id, JobStatus.CALCULATION_STARTED)
         
-        # Get the absolute path to the database that the server is using
         server_db_path = db.db_path if hasattr(db, 'db_path') else 'etmap.db'
         absolute_db_path = os.path.abspath(server_db_path)
         
         print(f"[AUTO-CALC] Using database path: {absolute_db_path}")
         
-        # Construct the command to run ETCalculation.py with explicit database path
         cmd = [
-            sys.executable,  # Use the same Python interpreter
+            sys.executable,  
             ETCALCULATION_SCRIPT_PATH,
             "--uuid", request_id,
             "--db-path", absolute_db_path
@@ -360,13 +323,12 @@ def trigger_automatic_calculation(request_id: str):
         
         print(f"[AUTO-CALC] Executing command: {' '.join(cmd)}")
         
-        # Launch process with output capture but non-blocking
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # Combine stderr with stdout
+            stderr=subprocess.STDOUT,  
             text=True,
-            bufsize=1,  # Line buffered
+            bufsize=1, 
             universal_newlines=True
         )
         
@@ -384,37 +346,28 @@ def trigger_automatic_calculation(request_id: str):
         print(f"[AUTO-CALC] Please update ETCALCULATION_SCRIPT_PATH in the configuration")
         print(f"[AUTO-CALC] Manual calculation: python3 ETCalculation.py --uuid {request_id}")
         
-        #  ADD THIS: Update status to calculation failed
         job_manager.update_status(request_id, JobStatus.CALCULATION_FAILED, "ETCalculation.py not found")
         
     except Exception as e:
         print(f"[AUTO-CALC] ERROR: Failed to trigger automatic calculation: {e}")
         print(f"[AUTO-CALC] Manual calculation: python3 ETCalculation.py --uuid {request_id}")
         
-        #  ADD THIS: Update status to calculation failed
         job_manager.update_status(request_id, JobStatus.CALCULATION_FAILED, str(e))
 
 def monitor_calculation_process(process, request_id: str):
-    """
-    Monitor the ETCalculation.py process output in a separate thread
-    """
     try:
         print(f"[AUTO-CALC] Monitoring calculation process for UUID: {request_id}")
         
-        # Read output line by line
         for line in process.stdout:
             line = line.strip()
             if line:
                 print(f"[CALC-{request_id[:8]}] {line}")
         
-        # Wait for process to complete
         return_code = process.wait()
         
         if return_code == 0:
             print(f"[AUTO-CALC]  Calculation completed successfully for UUID: {request_id}")
             print(f"[AUTO-CALC] Check output in UUID folder: {request_id}")
-            
-            #  ADD THIS: Update status to calculation complete
             job_manager.update_status(request_id, JobStatus.CALCULATION_COMPLETE)
             
         else:
@@ -422,12 +375,10 @@ def monitor_calculation_process(process, request_id: str):
             print(f"[AUTO-CALC] Process exited with code: {return_code}")
             print(f"[AUTO-CALC] Try manual debugging: python3 ETCalculation.py --uuid {request_id}")
             
-            #  ADD THIS: Update status to calculation failed
             job_manager.update_status(request_id, JobStatus.CALCULATION_FAILED, f"Process exited with code {return_code}")
             
     except Exception as e:
         print(f"[AUTO-CALC] ERROR monitoring calculation process: {e}")
         print(f"[AUTO-CALC] Try manual debugging: python3 ETCalculation.py --uuid {request_id}")
         
-        #  ADD THIS: Update status to calculation failed
         job_manager.update_status(request_id, JobStatus.CALCULATION_FAILED, str(e))

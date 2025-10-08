@@ -14,11 +14,7 @@ class SpatialCoverageChecker:
     """
     
     def is_covered(self, dataset: str, aoi_geometry, date_from: str, date_to: str) -> bool:
-        """
-        Check if dataset covers the AOI for the date range
-        """
         if dataset == 'landsat':
-            # ✓ Make Landsat coverage date-aware
             return self._check_landsat_coverage(aoi_geometry, date_from, date_to)
         elif dataset == 'prism':
             return self._check_prism_coverage(aoi_geometry, date_from, date_to)
@@ -28,9 +24,6 @@ class SpatialCoverageChecker:
             raise ValueError(f"Unknown dataset: {dataset}")
     
     def get_coverage_summary(self, aoi_geometry, date_from: str, date_to: str) -> dict:
-        """
-        Get detailed coverage summary for all datasets
-        """
         summary = {
             'landsat': {
                 'covered': self._check_landsat_coverage(aoi_geometry, date_from, date_to),
@@ -57,13 +50,8 @@ class SpatialCoverageChecker:
         return summary
     
     def _check_landsat_coverage(self, aoi_geometry, date_from: Optional[str] = None, date_to: Optional[str] = None) -> bool:
-        """
-        Check Landsat coverage (date-aware if dates provided).
-        We consider scenes (B4/B5) whose filenames end with _YYYY-MM-DD.tif within the requested date window.
-        """
         print("Checking existing Landsat coverage...")
         
-        # Date filter set
         dates_set = None
         if date_from and date_to:
             cur = datetime.fromisoformat(date_from).date()
@@ -88,7 +76,7 @@ class SpatialCoverageChecker:
 
         coverage_polygons = []
         
-        # Check B4 files (date-filtered if dates_set)
+        # Check B4 files 
         b4_files = list(_iter_files(RawDataConfig.LANDSAT_B4_DIR))
         print(f"Found {len(b4_files)} existing Landsat B4 files in date window" if dates_set else f"Found {len(b4_files)} existing Landsat B4 files")
         
@@ -119,9 +107,6 @@ class SpatialCoverageChecker:
             return False
     
     def _check_prism_coverage(self, aoi_geometry, date_from: str, date_to: str) -> bool:
-        """
-        Check PRISM coverage
-        """
         print(f"Checking existing PRISM coverage for {date_from} to {date_to}...")
         
         current_date = datetime.fromisoformat(date_from)
@@ -164,9 +149,6 @@ class SpatialCoverageChecker:
             return False
     
     def _check_nldas_coverage(self, aoi_geometry, date_from: str, date_to: str) -> bool:
-        """
-        Check NLDAS coverage for date range with proper spatial caching
-        """
         print(f"Checking existing NLDAS coverage for {date_from} to {date_to}...")
         
         current_date = datetime.fromisoformat(date_from)
@@ -183,7 +165,7 @@ class SpatialCoverageChecker:
             date_str = current_date.strftime('%Y-%m-%d')
             date_folder = os.path.join(nldas_year_dir, date_str)
             
-            total_required_hours += 24  # 24 hours per day
+            total_required_hours += 24  
             
             if os.path.exists(date_folder):
                 nldas_files = glob.glob(os.path.join(date_folder, "*.tif"))
@@ -234,7 +216,6 @@ class SpatialCoverageChecker:
             return False
     
     def _get_landsat_coverage_details(self, date_from: Optional[str] = None, date_to: Optional[str] = None) -> dict:
-        """Get detailed Landsat coverage information (date-aware if dates provided)"""
         dates_set = None
         if date_from and date_to:
             cur = datetime.fromisoformat(date_from).date()
@@ -260,12 +241,11 @@ class SpatialCoverageChecker:
         b4_files = _filtered(RawDataConfig.LANDSAT_B4_DIR)
         b5_files = _filtered(RawDataConfig.LANDSAT_B5_DIR)
         
-        # Count unique scenes (by scene_id portion in the filename)
+        # Count unique scenes 
         def _scene_id(path):
             base = os.path.basename(path)
             name_no_ext = os.path.splitext(base)[0]
             parts = name_no_ext.split('_')
-            # B4_<scene_id>_<date> → scene_id = parts[1:-1] joined in case scene_id has underscores
             return '_'.join(parts[1:-1]) if len(parts) > 2 else (parts[1] if len(parts) > 1 else "")
         
         total_scenes = len(set([_scene_id(f) for f in (b4_files + b5_files)]))
@@ -281,7 +261,6 @@ class SpatialCoverageChecker:
         }
     
     def _get_prism_coverage_details(self, date_from: str, date_to: str) -> dict:
-        """Get detailed PRISM coverage information"""
         current_date = datetime.fromisoformat(date_from)
         end_date = datetime.fromisoformat(date_to)
         
@@ -311,7 +290,6 @@ class SpatialCoverageChecker:
         }
     
     def _get_nldas_coverage_details(self, date_from: str, date_to: str) -> dict:
-        """Get detailed NLDAS coverage information"""
         current_date = datetime.fromisoformat(date_from)
         end_date = datetime.fromisoformat(date_to)
         
@@ -333,7 +311,7 @@ class SpatialCoverageChecker:
                 day_hours = len(nldas_files)
                 found_hours += day_hours
                 
-                if day_hours >= 20:  # Consider day covered if >= 20 hours available
+                if day_hours >= 20:  
                     covered_days += 1
             
             current_date += timedelta(days=1)

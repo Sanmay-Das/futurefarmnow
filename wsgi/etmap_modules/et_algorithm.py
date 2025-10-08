@@ -1,21 +1,5 @@
-#!/usr/bin/env python3
 """
-ET Algorithm - Main Processing Workflow (Scala-aligned band order)
-Handles file I/O, temporal continuity, and block coordination.
-Uses BAITSSSAlgorithm for pure physics calculations.
-
-This version matches the Scala pipeline band order:
-  1: soil_awc
-  2: soil_fc
-  3: nlcd              <-- swapped with elevation
-  4: elevation         <-- swapped with nlcd
-  5: precipitation (PRISM)
-  6: ndvi   (Landsat)
-  7: lai    (Landsat)
-  8: temperature (NLDAS)
-  9: humidity    (NLDAS)
- 10: wind_speed  (NLDAS)
- 11: radiation   (NLDAS)
+ET Algorithm - Main Processing Workflow 
 """
 
 import os
@@ -23,34 +7,20 @@ import glob
 import json
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
-
 import numpy as np
 import rasterio
-
+import matplotlib.pyplot as plt
 from .baitsss_algorithm import BAITSSSAlgorithm
 from .config import ETMapConfig
 from .utils import FileManager, LoggingUtils
 
 
 class ETAlgorithm:
-    """
-    Main ET Algorithm workflow coordinator
-    Handles file processing and coordinates with BAITSSS physics
-    """
-
     def __init__(self):
         self.block_size = 200
-        self.baitsss = BAITSSSAlgorithm()  # Pure physics module
+        self.baitsss = BAITSSSAlgorithm()  
 
     def create_enhanced_hourly_files_with_et(self, hourly_files_dir: str, output_dir: str, save_intermediate_files: bool = True) -> bool:
-        """
-        Main workflow: Process hourly files with temporal continuity
-        
-        Parameters:
-        - hourly_files_dir: Directory containing hourly aligned files
-        - output_dir: Output directory for ET enhanced files
-        - save_intermediate_files: If True, save individual hourly enhanced files. If False, only save final result
-        """
         print("Starting BAITSSS ET Processing...")
         print(f"Input: {hourly_files_dir}")
         print(f"Output: {output_dir}")
@@ -65,14 +35,13 @@ class ETAlgorithm:
             print(f"Found {len(hourly_files)} hourly files to process")
             os.makedirs(output_dir, exist_ok=True)
 
-            # Process hourly sequence - now returns processed data for final aggregation
+            # Process hourly sequence 
             processed_data, processed_count = self._process_hourly_sequence(hourly_files, output_dir, save_intermediate_files)
 
             print("\n Processing Summary:")
             print(f"   Successfully processed: {processed_count}/{len(hourly_files)} files")
 
             if processed_count > 0:
-                # Always create final summary regardless of intermediate file flag
                 self._create_comprehensive_et_summary(output_dir, processed_data, save_intermediate_files)
                 return True
             return False
@@ -84,16 +53,14 @@ class ETAlgorithm:
             return False
 
     def _get_sorted_hourly_files(self, hourly_files_dir: str) -> List[str]:
-        """Get hourly files sorted chronologically"""
         pattern = os.path.join(hourly_files_dir, "*.tif")
         files = glob.glob(pattern)
         return sorted(files, key=lambda x: os.path.basename(x))
 
     def _process_hourly_sequence(self, hourly_files: List[str], output_dir: str, save_intermediate_files: bool) -> tuple:
-        """Process hourly files in temporal sequence"""
         previous_state = None
         processed_count = 0
-        all_processed_data = []  # Store all processed data for final aggregation
+        all_processed_data = []  
 
         for i, hourly_file in enumerate(hourly_files):
             filename = os.path.basename(hourly_file)
@@ -103,9 +70,8 @@ class ETAlgorithm:
             if result is not None:
                 current_state, enhanced_data, profile = result
                 processed_count += 1
-                previous_state = current_state  # Temporal continuity
+                previous_state = current_state  
                 
-                # Store processed data for final aggregation
                 all_processed_data.append({
                     'filename': filename,
                     'enhanced_data': enhanced_data,
@@ -124,20 +90,18 @@ class ETAlgorithm:
 
     def _process_single_hourly_file(self, hourly_file: str, output_dir: str,
                                     previous_state: Optional[Dict], save_intermediate_files: bool) -> Optional[tuple]:
-        """Process single hourly file with BAITSSS physics"""
         try:
             filename = os.path.basename(hourly_file)
             output_filename = filename.replace('.tif', '_enhanced.tif')
             output_path = os.path.join(output_dir, output_filename)
 
             with rasterio.open(hourly_file) as src:
-                input_data = src.read()  # (bands, H, W)
+                input_data = src.read()  
                 height, width = input_data.shape[1], input_data.shape[2]
                 profile = src.profile
 
                 print(f"    Processing {height}x{width} pixels in blocks...")
 
-                # Initialize or use previous state
                 if previous_state is None:
                     print("    Initializing first hour state...")
                     current_state = self._initialize_et_state(height, width)
@@ -145,15 +109,12 @@ class ETAlgorithm:
                     current_state = {k: v.copy() for k, v in previous_state.items()}
                     print("    Using previous hour state...")
 
-                # Extract variables from input bands
                 variables = self._extract_variables_from_bands(input_data)
 
-                # Process using block-wise BAITSSS
                 updated_state = self._run_blockwise_baitsss(variables, current_state, height, width)
                 if updated_state is None:
                     return None
 
-                # Create enhanced output
                 enhanced_data = self._create_enhanced_output(input_data, updated_state)
 
                 # Only save to disk if flag is True
@@ -170,7 +131,6 @@ class ETAlgorithm:
             return None
 
     def _initialize_et_state(self, height: int, width: int) -> Dict[str, np.ndarray]:
-        """Initialize ET state variables for first hour"""
         return {
             'et_cumulative': np.zeros((height, width), dtype=np.float32),
             'precip_cumulative': np.zeros((height, width), dtype=np.float32),
@@ -180,27 +140,11 @@ class ETAlgorithm:
         }
 
     def _extract_variables_from_bands(self, input_data: np.ndarray) -> Dict[str, np.ndarray]:
-        """
-        Extract variables from input raster bands using Scala-aligned order.
-
-        Band indices (0-based):
-          0: soil_awc
-          1: soil_fc
-          2: nlcd          <-- swapped with elevation
-          3: elevation     <-- swapped with nlcd
-          4: precipitation
-          5: ndvi
-          6: lai
-          7: temperature
-          8: humidity
-          9: wind_speed
-         10: radiation
-        """
         band_mapping = {
             0: 'soil_awc',
             1: 'soil_fc',
-            2: 'nlcd',          # <-- was elevation before; now matches Scala
-            3: 'elevation',     # <-- was nlcd before; now matches Scala
+            2: 'nlcd',          
+            3: 'elevation',     
             4: 'precipitation',
             5: 'ndvi',
             6: 'lai',
@@ -218,7 +162,6 @@ class ETAlgorithm:
         for band_idx, var_name in band_mapping.items():
             if band_idx < input_data.shape[0]:
                 arr = input_data[band_idx].astype(np.float32)
-                # Replace NoData with NaN to avoid contaminating physics
                 arr = np.where(arr == -9999, np.nan, arr)
                 variables[var_name] = arr
                 print(f"      Band {band_idx+1}: {var_name} - Shape: {arr.shape}")
@@ -232,7 +175,6 @@ class ETAlgorithm:
             valid_pixels = np.sum(~np.isnan(var_data))
             print(f"      {var_name}: {valid_pixels:,} valid pixels")
 
-        # Replace remaining NaNs with sensible defaults before physics
         for var_name in list(variables.keys()):
             if np.isnan(variables[var_name]).any():
                 fill = self._get_default_scalar(var_name)
@@ -257,16 +199,11 @@ class ETAlgorithm:
         return float(defaults.get(var_name, 0.0))
 
     def _get_default_array(self, var_name: str, height: int, width: int) -> np.ndarray:
-        """Get default values for missing variables - REALISTIC DEFAULTS"""
         return np.full((height, width), self._get_default_scalar(var_name), dtype=np.float32)
 
     def _run_blockwise_baitsss(self, variables: Dict[str, np.ndarray],
                                state: Dict[str, np.ndarray],
                                height: int, width: int) -> Optional[Dict[str, np.ndarray]]:
-        """
-        Run BAITSSS algorithm using block-wise processing
-        Coordinates with BAITSSSAlgorithm for pure physics
-        """
         try:
             print(f"    Starting block-wise BAITSSS processing...")
             print(f"    Raster size: {height}x{width} pixels")
@@ -299,7 +236,7 @@ class ETAlgorithm:
                         irrigation_hour[b_i:b_i+block_height, b_j:b_j+block_width] = block_results['irrigation']
                     else:
                         print(f"      Block at ({b_i}, {b_j}) failed - using defaults")
-                        et_hourly[b_i:b_i+block_height, b_j:b_j+block_width] = 2.0  # mm/hour default
+                        et_hourly[b_i:b_i+block_height, b_j:b_j+block_width] = 2.0  
 
                     blocks_processed += 1
                     if blocks_processed % 10 == 0 or blocks_processed == total_blocks:
@@ -334,20 +271,17 @@ class ETAlgorithm:
 
     def _extract_block_data(self, variables: Dict[str, np.ndarray], state: Dict[str, np.ndarray],
                             b_i: int, b_j: int, block_height: int, block_width: int) -> Dict[str, np.ndarray]:
-        """Extract block data for BAITSSS processing"""
         block_vars: Dict[str, np.ndarray] = {}
 
         for var_name, var_data in variables.items():
             block_vars[var_name] = var_data[b_i:b_i+block_height, b_j:b_j+block_width]
 
-        # Add previous state for temporal continuity
         block_vars['soil_moisture_surface_prev'] = state['soil_moisture_surface'][b_i:b_i+block_height, b_j:b_j+block_width]
         block_vars['soil_moisture_root_prev'] = state['soil_moisture_root'][b_i:b_i+block_height, b_j:b_j+block_width]
 
         return block_vars
 
     def _create_enhanced_output(self, input_data: np.ndarray, state: Dict[str, np.ndarray]) -> np.ndarray:
-        """Create enhanced output with original bands + BAITSSS results"""
         enhanced_bands = [
             input_data,
             state['et_cumulative'][np.newaxis, :, :],
@@ -359,7 +293,6 @@ class ETAlgorithm:
         return np.concatenate(enhanced_bands, axis=0)
 
     def _save_enhanced_file(self, enhanced_data: np.ndarray, output_path: str, profile: dict):
-        """Save enhanced raster file"""
         profile.update({
             'count': enhanced_data.shape[0],
             'dtype': 'float32',
@@ -370,11 +303,9 @@ class ETAlgorithm:
             dst.write(enhanced_data)
 
     def _create_comprehensive_et_summary(self, output_dir: str, processed_data: List[Dict] = None, save_intermediate_files: bool = True):
-        """Create daily ET increments and a final period summary from them."""
         try:
             print(" Creating comprehensive ET summary...")
 
-            # If we have processed data in memory, use it; otherwise read from disk
             if processed_data and not save_intermediate_files:
                 print(" Using in-memory processed data for summary...")
                 daily_groups = self._group_processed_data_by_day(processed_data)
@@ -386,7 +317,6 @@ class ETAlgorithm:
                     return
                 daily_groups = self._group_files_by_day(enhanced_files)
 
-            # build daily increments carrying forward the cumulative baseline
             daily_et_files: List[str] = []
             prev_cum = None
             for date_str in sorted(daily_groups.keys()):
@@ -399,7 +329,6 @@ class ETAlgorithm:
                     daily_path, prev_cum = result
                     daily_et_files.append(daily_path)
 
-            # final period map (mean over daily ETs; switch to sum if you prefer)
             if daily_et_files:
                 self._create_final_et_summary(daily_et_files, output_dir)
 
@@ -411,46 +340,39 @@ class ETAlgorithm:
             print(f" Error creating ET summary: {e}")
 
     def _group_processed_data_by_day(self, processed_data: List[Dict]) -> Dict[str, List[Dict]]:
-        """Group processed data by day"""
         daily_groups: Dict[str, List[Dict]] = {}
         for data_item in processed_data:
             filename = data_item['filename']
-            date_part = filename.split('_')[0]  # Extract YYYY-MM-DD
+            date_part = filename.split('_')[0] 
             daily_groups.setdefault(date_part, []).append(data_item)
         return daily_groups
 
     def _group_files_by_day(self, enhanced_files: List[str]) -> Dict[str, List[str]]:
-        """Group enhanced files by day"""
         daily_groups: Dict[str, List[str]] = {}
         for file_path in enhanced_files:
             filename = os.path.basename(file_path)
-            date_part = filename.split('_')[0]  # Extract YYYY-MM-DD
+            date_part = filename.split('_')[0]  
             daily_groups.setdefault(date_part, []).append(file_path)
         return daily_groups
 
     def _create_daily_et_summary_from_memory(self, processed_items: List[Dict], output_dir: str, date_str: str,
                                            baseline_cum: Optional[np.ndarray]) -> Optional[tuple]:
-        """Create daily ET summary from in-memory processed data"""
         try:
             processed_items = sorted(processed_items, key=lambda x: x['filename'])
             template_item = processed_items[0]
             
-            # Get the last cumulative ET of the day
             last_item = processed_items[-1]
             enhanced_data = last_item['enhanced_data']
             
-            # Figure out index of et_cumulative band (original + 1)
-            original_bands = enhanced_data.shape[0] - 5  # 5 appended BAITSSS layers
-            et_last = enhanced_data[original_bands]  # et_cumulative band
+            original_bands = enhanced_data.shape[0] - 5  
+            et_last = enhanced_data[original_bands]  
             
-            # baseline: previous day's last cumulative (or zeros for first day)
             if baseline_cum is None:
                 baseline = np.zeros_like(et_last, dtype=np.float32)
             else:
                 baseline = baseline_cum.astype(np.float32)
             
             daily = (et_last.astype(np.float32) - baseline)
-            # keep NoData consistent
             nodata = -9999.0
             mask = (et_last == nodata)
             daily = np.where(mask, nodata, daily).astype(np.float32)
@@ -472,35 +394,26 @@ class ETAlgorithm:
 
     def _create_daily_et_summary(self, hourly_files: List[str], output_dir: str, date_str: str,
                              baseline_cum: Optional[np.ndarray]) -> Optional[tuple]:
-        """
-        Create daily ET (increment) from cumulative band:
-        daily = last_cumulative_of_day - baseline_cumulative (prev day's last).
-        Returns (daily_et_path, last_cumulative_of_day).
-        """
         try:
             hourly_files = sorted(hourly_files)
             template_file = hourly_files[0]
 
-            # figure out index of et_cumulative band (original + 1)
             with rasterio.open(template_file) as src0:
-                original_bands = src0.count - 5  # 5 appended BAITSSS layers
+                original_bands = src0.count - 5  
                 profile = src0.profile.copy()
                 profile.update({'count': 1, 'dtype': 'float32', 'nodata': -9999})
 
-            # read last cumulative of the day
             last_file = hourly_files[-1]
             with rasterio.open(last_file) as src_last:
-                et_last = src_last.read(original_bands + 1)  # et_cumulative
+                et_last = src_last.read(original_bands + 1)  
                 bounds = src_last.bounds
 
-            # baseline: previous day's last cumulative (or zeros for first day)
             if baseline_cum is None:
                 baseline = np.zeros_like(et_last, dtype=np.float32)
             else:
                 baseline = baseline_cum.astype(np.float32)
 
             daily = (et_last.astype(np.float32) - baseline)
-            # keep NoData consistent: if last is nodata, mark daily nodata
             nodata = -9999.0
             mask = (et_last == nodata)
             daily = np.where(mask, nodata, daily).astype(np.float32)
@@ -521,7 +434,6 @@ class ETAlgorithm:
             return None
 
     def _create_final_et_summary(self, daily_et_files: List[str], output_dir: str):
-        """Create final period ET summary"""
         try:
             print(" Creating final ET summary...")
 
@@ -566,9 +478,6 @@ class ETAlgorithm:
             print(f"     Error creating final summary: {e}")
             
     def _create_et_visualization(self, et_data: np.ndarray, output_dir: str, bounds=None):
-        """Create clean PNG visualization with just the image data."""
-        import matplotlib.pyplot as plt
-
         et_masked = np.ma.masked_where(et_data == -9999, et_data)
 
         if bounds is not None:
@@ -607,7 +516,6 @@ class ETAlgorithm:
         print(f"      ET visualization created: {png_path}")
 
     def _create_json_summary(self, output_dir: str, processed_data: List[Dict]):
-        """Create comprehensive JSON summary"""
         try:
             final_tif = os.path.join(output_dir, "ET_final_result.tif")
 
@@ -655,9 +563,6 @@ class ETAlgorithm:
 
 
 class ETResultsManager:
-    """
-    Manages ET results and creates summary reports (legacy compatibility)
-    """
 
     @staticmethod
     def create_comprehensive_et_summary(output_dir: str, request_data: Dict):

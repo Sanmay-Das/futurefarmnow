@@ -9,9 +9,6 @@ class RawDataUtils:
     
     @staticmethod
     def parse_geometry(geometry_json: str) -> Optional[object]:
-        """
-        Parse geometry JSON string to shapely geometry
-        """
         if not geometry_json:
             return None
         
@@ -27,9 +24,6 @@ class RawDataUtils:
     
     @staticmethod
     def validate_geometry(geometry_dict: dict):
-        """
-        Validate geometry dictionary
-        """
         try:
             shape(geometry_dict)
         except Exception as e:
@@ -37,7 +31,6 @@ class RawDataUtils:
     
     @staticmethod
     def format_file_size(size_bytes: int) -> str:
-        """Format file size in human readable format"""
         for unit in ['B', 'KB', 'MB', 'GB']:
             if size_bytes < 1024.0:
                 return f"{size_bytes:.1f} {unit}"

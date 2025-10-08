@@ -5,6 +5,8 @@ import json
 import uuid
 import requests
 import time
+import re
+import rasterio
 import numpy as np
 from datetime import datetime, timedelta
 from typing import Dict, Optional
@@ -26,15 +28,12 @@ class ETCalculationManager:
         self.save_intermediate_files = save_intermediate_files
     
     def process_with_curl_integration(self, curl_command: str, output_path: str = None) -> bool:
-        """
-        Process ETMap calculation with full curl integration
-        """
         print("="*60)
         print("ETMAP CALCULATION WITH UUID INTEGRATION")
         print("="*60)
         
         try:
-            # Step 1: Parse the curl command
+            # Parse the curl command
             print("\n=== Step 1: Parsing Curl Command ===")
             request_data = CurlCommandParser.parse_curl_command(curl_command)
             
@@ -42,7 +41,7 @@ class ETCalculationManager:
                 print("ERROR: Invalid request data in curl command")
                 return False
             
-            # Step 2: Extract API endpoint and submit request
+            # Extract API endpoint and submit request
             print("\n=== Step 2: Submitting Data Collection Request ===")
             api_url = self._extract_api_url(curl_command)
             
@@ -59,13 +58,13 @@ class ETCalculationManager:
             
             print(f"Data collection request submitted with UUID: {request_id}")
             
-            # Step 3: Wait for data collection to complete
+            # Wait for data collection to complete
             print("\n=== Step 3: Waiting for Data Collection ===")
             if not self._wait_for_data_collection(api_url, request_id):
                 print("ERROR: Data collection failed or timed out")
                 return False
             
-            # Step 4: Process the collected data using the same UUID
+            # Process the collected data using the same UUID
             print("\n=== Step 4: Processing Collected Data ===")
             
             # Determine output path - use UUID if not specified
@@ -106,9 +105,6 @@ class ETCalculationManager:
             return False
     
     def process_with_existing_uuid(self, request_id: str, output_path: str = None) -> bool:
-        """
-        Process data using an existing UUID (when data collection already completed)
-        """
         print("="*60)
         print("ETMAP CALCULATION WITH EXISTING UUID")
         print("="*60)
@@ -177,15 +173,10 @@ class ETCalculationManager:
 
     
     def _extract_api_url(self, curl_command: str) -> Optional[str]:
-        """Extract API URL from curl command"""
         try:
-            # First try the parser method
             url = CurlCommandParser.extract_url_from_curl(curl_command)
-            
-            # If that fails, try a more direct approach
             if not url or not url.startswith('http'):
                 # Look for http/https URLs directly in the command
-                import re
                 url_match = re.search(r'(https?://[^\s\'"\\]+)', curl_command)
                 if url_match:
                     url = url_match.group(1)
@@ -202,7 +193,6 @@ class ETCalculationManager:
             return None
     
     def _submit_data_collection_request(self, api_url: str, request_data: Dict) -> Optional[str]:
-        """Submit data collection request to API"""
         try:
             headers = {'Content-Type': 'application/json'}
             
@@ -236,7 +226,7 @@ class ETCalculationManager:
         """Wait for data collection to complete by polling status"""
         status_url = f"{api_url}/{request_id}"
         max_wait_seconds = max_wait_minutes * 60
-        poll_interval = 10  # seconds
+        poll_interval = 10  
         elapsed_time = 0
         
         print("Monitoring data collection progress...")
@@ -293,10 +283,6 @@ class ETCalculationManager:
 
 
 class CompleteETMapProcessor:
-    """
-    Complete processor that creates basic aligned datasets, hourly aligned files, AND runs modular BAITSSS ET
-    """
-    
     def __init__(self, db_path: str = None):
         self.grid_manager = UnifiedGridManager()
         self.nldas_processor = NLDASProcessor()
@@ -307,14 +293,9 @@ class CompleteETMapProcessor:
         # Database manager for UUID lookups
         self.db_path = db_path or ETMapConfig.DB_PATH
         self.db_manager = DatabaseManager(self.db_path)
-        
-        # Initialize modular ET Algorithm
         self.et_algorithm = ETAlgorithm()
         
     def process_complete_etmap_data(self, request_data: dict, output_base_path: str):
-        """
-        Complete processing: basic alignment + hourly aligned files + modular BAITSSS ET
-        """
         print("="*60)
         print("COMPLETE ETMAP PROCESSOR WITH MODULAR BAITSSS")
         print("Creates basic aligned data + hourly aligned files + ET calculations")
@@ -398,33 +379,25 @@ class CompleteETMapProcessor:
             print("="*60)
     
     def _process_landsat_data(self, aoi_metadata: dict, output_base_path: str):
-        """Process Landsat data following the original logic"""
         print("Processing Landsat Data...")
         self.landsat_processor.process_landsat_data(aoi_metadata, output_base_path)
     
     def _process_static_data(self, aoi_metadata: dict, output_base_path: str, year: int = None):
-        """Process static data following the original logic"""
         print("Processing Static Data...")
         self.static_processor.process_static_data(aoi_metadata, output_base_path, year)
     
     def _process_prism_data_by_dates(self, aoi_metadata: dict, date_from: str, date_to: str, output_base_path: str):
-        """Process PRISM data following the original logic"""
         print("Processing PRISM Data...")
         self.prism_processor.process_prism_data_by_dates(aoi_metadata, date_from, date_to, output_base_path)
     
     def _create_hourly_aligned_files(self, request_data: dict, aoi_metadata: dict, output_base_path: str):
-        """Create hourly aligned files using modular processor"""
-        # Use the modular processor's hourly file creation
         modular_processor = ModularProcessor(db_path=self.db_path)
         modular_processor._create_hourly_aligned_files(request_data, aoi_metadata, output_base_path)
     
     def _save_processing_metadata(self, request_data: dict, aoi_metadata: dict, output_base_path: str):
-        """Save processing metadata and request info"""
-        # Save original request
         request_file = os.path.join(output_base_path, "original_request.json")
         FileManager.save_json(request_data, request_file)
         
-        # Save grid metadata
         metadata_file = os.path.join(output_base_path, "grid_metadata.json")
         serializable_metadata = GeospatialUtils.serialize_geometry_metadata(aoi_metadata)
         FileManager.save_json(serializable_metadata, metadata_file)
@@ -432,15 +405,8 @@ class CompleteETMapProcessor:
         print(f"Metadata saved: {request_file}, {metadata_file}")
 
     def _run_modular_baitsss_et_processing(self, output_base_path: str) -> bool:
-        """
-        Run modular BAITSSS ET algorithm with clean separation of concerns
-        """
         print("Starting Modular BAITSSS ET Processing...")
-        
-        # Path to hourly aligned files
         hourly_aligned_dir = os.path.join(output_base_path, "hourly_aligned")
-        
-        # Output directory for ET enhanced files
         et_enhanced_dir = os.path.join(output_base_path, "et_enhanced")
         
         if not os.path.exists(hourly_aligned_dir):
@@ -448,7 +414,6 @@ class CompleteETMapProcessor:
             return False
         
         try:
-            # Delegate to the modular ET algorithm
             success = self.et_algorithm.create_enhanced_hourly_files_with_et(
                 hourly_files_dir=hourly_aligned_dir,
                 output_dir=et_enhanced_dir
@@ -458,14 +423,13 @@ class CompleteETMapProcessor:
                 print("Modular BAITSSS ET processing finished successfully!")
                 print(f"Enhanced hourly files: {et_enhanced_dir}")
                 
-                # Verify final output exists
                 final_et_path = os.path.join(et_enhanced_dir, "ET_final_result.tif")
                 if os.path.exists(final_et_path):
                     print(f"Final ET map verified: {final_et_path}")
                     return True
                 else:
                     print(f"Warning: Final ET map not found at {final_et_path}")
-                    return success  # Still return success if processing completed
+                    return success  
                 
             else:
                 print("Modular BAITSSS ET processing failed!")
@@ -478,9 +442,7 @@ class CompleteETMapProcessor:
             return False
 
     def _display_et_statistics(self, final_et_path: str):
-        """Display quick ET statistics"""
         try:
-            import rasterio
             with rasterio.open(final_et_path) as src:
                 et_data = src.read(1)
                 valid_data = et_data[et_data != -9999]
@@ -496,12 +458,7 @@ class CompleteETMapProcessor:
 
 
 def main():
-    """
-    Main function - creates basic aligned data, hourly aligned files, AND runs modular BAITSSS ET
-    """
     parser = argparse.ArgumentParser(description='Complete ETMap Processor with Modular BAITSSS ET')
-    
-    # Mutually exclusive group for input method
     input_group = parser.add_mutually_exclusive_group(required=True)
     input_group.add_argument('--curl', type=str, help='Curl command as string')
     input_group.add_argument('--uuid', type=str, help='Request ID from database')
@@ -510,8 +467,8 @@ def main():
     parser.add_argument('--db-path', type=str, help='Path to SQLite database (optional)')
     parser.add_argument('--max-wait', type=int, default=30, help='Maximum wait time for data collection in minutes')
     
-    # Change this to control default behavior
-    DEFAULT_SAVE_INTERMEDIATE_FILES = False  # Change to True to save intermediates by default
+    # Change to True to save intermediates by default
+    DEFAULT_SAVE_INTERMEDIATE_FILES = False  
     
     args = parser.parse_args()
     
@@ -523,21 +480,16 @@ def main():
     print("="*60)
     
     try:
-        # Ensure directories exist
         ETMapConfig.ensure_directories_exist()
-        
-        # Create calculation manager with the flag
         calc_manager = ETCalculationManager(args.db_path, DEFAULT_SAVE_INTERMEDIATE_FILES)
         
         success = False
         
         if args.curl:
-            # Full workflow: submit request, wait for data collection, then process
             print("Starting full ETMap calculation workflow with modular BAITSSS ET...")
             success = calc_manager.process_with_curl_integration(args.curl, args.output_path)
             
         elif args.uuid:
-            # Process existing UUID (data collection already completed)
             print("Processing existing UUID with modular BAITSSS ET...")
             success = calc_manager.process_with_existing_uuid(args.uuid, args.output_path)
         

@@ -1,17 +1,10 @@
-#!/usr/bin/env python3
-"""
-BAITSSS ET Algorithm - Pure Physics Implementation
-Biosphere-Atmosphere Interactions Two-Source Surface Model
-Block-wise processing with complete physics
-"""
-
 import numpy as np
 import math
 from typing import Dict, Optional
 
 
 class BAITSSSConstants:
-    """Physical constants for BAITSSS ET model (matched to Scala BAITSSS_Constants)"""
+    """Constants for BAITSSS ET model"""
 
     # Moisture / canopy parameters
     MAD = 0.4
@@ -27,7 +20,7 @@ class BAITSSSConstants:
     Emiss_soil = 0.98
     Emiss_veg = 0.98
     BB_Emissi = (Emiss_soil + Emiss_veg) / 2.0
-    Stefan_Boltzamn = 0.0000000568  # 5.68e-8
+    Stefan_Boltzamn = 0.0000000568  
 
     # Aerodynamics / resistances
     rb = 25.0
@@ -59,7 +52,7 @@ class BAITSSSConstants:
     ssrun = 0.0
 
     # Reference ET and limits
-    Ref_ET = 1.5 / 3600.0       # ≈ 0.0004166667
+    Ref_ET = 1.5 / 3600.0       
     Ref_fac = 20.0
     ET_min = 0.000003
     rl_max = 5000.0
@@ -74,10 +67,6 @@ class BAITSSSConstants:
 
 
 class BAITSSSAlgorithm:
-    """
-    Pure BAITSSS Physics Implementation
-    Handles both single pixel and block processing
-    """
     
     def __init__(self):
         self.constants = BAITSSSConstants()
@@ -89,9 +78,8 @@ class BAITSSSAlgorithm:
                             precip_prism_sum_in: float, irri_sum_in: float, 
                             soilm_pre_in: float, soilm_root_pre_in: float) -> np.ndarray:
         """
-        Single pixel calculation (backward compatibility)
+        Single pixel calculation 
         """
-        # Convert to 1x1 block and process
         block_vars = {
             'ndvi': np.array([[ndvi_in]], dtype=np.float32),
             'lai': np.array([[lai_in]], dtype=np.float32),
@@ -123,15 +111,10 @@ class BAITSSSAlgorithm:
 
     def process_block(self, block_vars: Dict[str, np.ndarray], 
                      block_height: int, block_width: int) -> Optional[Dict[str, np.ndarray]]:
-        """
-        Process a block of data with complete BAITSSS physics
-        Main method for block-wise processing
-        """
+
         try:
-            # Extract and validate variables
             variables = self._extract_and_validate_variables(block_vars, block_height, block_width)
             
-            # Run complete BAITSSS physics
             results = self._run_complete_baitsss_physics(variables, block_height, block_width)
             
             return results
@@ -142,15 +125,7 @@ class BAITSSSAlgorithm:
 
     def _extract_and_validate_variables(self, block_vars: Dict[str, np.ndarray],
                                     block_height: int, block_width: int) -> Dict[str, np.ndarray]:
-        """
-        Extract all inputs for a block, apply defaults, and normalize units:
-        - Temperature forced to °C (auto-converts Kelvin)
-        - Humidity forced to RH (0–1). If input looks like specific humidity q (kg/kg), convert to RH.
-        - soil_fc converted to fraction if provided as percent.
-        - Physical sanity clips applied to prevent numeric blowups.
-        Returns a dict of float32 arrays shaped (block_height, block_width).
-        """
-        # 1) Map incoming names → internal names
+ 
         variable_mapping = {
             'soil_awc': 'soil_awc',
             'soil_fc': 'soil_fc',
@@ -167,43 +142,38 @@ class BAITSSSAlgorithm:
             'soil_moisture_root_prev': 'soil_moisture_root_prev'
         }
 
-        # 2) Defaults (rough but reasonable)
+        # Defaults 
         defaults = {
-            'soil_awc': 0.15,        # fraction
-            'soil_fc': 35.0,         # percent (will be turned into fraction)
-            'elevation': 200.0,      # meters
-            'nlcd': 42.0,            # landcover code
-            'precipitation': 0.0,    # mm/hour
-            'ndvi': 0.4,             # -
-            'lai': 3.0,              # m2/m2
-            'temperature': 15.0,     # °C
-            'humidity': 0.65,        # RH (0–1)
-            'wind_speed': 3.0,       # m/s
-            'radiation': 400.0,      # W/m2
-            'soil_moisture_surface_prev': 0.2,  # fraction
-            'soil_moisture_root_prev': 0.3      # fraction
+            'soil_awc': 0.15,        
+            'soil_fc': 35.0,         
+            'elevation': 200.0,      
+            'nlcd': 42.0,            
+            'precipitation': 0.0,    
+            'ndvi': 0.4,             
+            'lai': 3.0,              
+            'temperature': 15.0,    
+            'humidity': 0.65,        
+            'wind_speed': 3.0,       
+            'radiation': 400.0,      
+            'soil_moisture_surface_prev': 0.2,  
+            'soil_moisture_root_prev': 0.3      
         }
 
-        # 3) Extract arrays (or fill with defaults)
         variables: Dict[str, np.ndarray] = {}
         for src_name, dst_name in variable_mapping.items():
             if src_name in block_vars:
                 arr = block_vars[src_name].astype(np.float32)
-                # Ensure proper shape (block_height, block_width)
                 if arr.shape != (block_height, block_width):
-                    # Broadcast or pad if needed (very rare; usually exact slices)
                     arr = np.full((block_height, block_width), np.nan, dtype=np.float32)
             else:
                 arr = np.full((block_height, block_width), defaults[dst_name], dtype=np.float32)
             variables[dst_name] = arr
 
-        # 4) Unit fixes
-        # Temperature: Kelvin → °C if it looks like Kelvin
+        # Temperature
         if np.nanmedian(variables['temperature']) > 100.0:
             variables['temperature'] = variables['temperature'] - 273.15
 
         # Humidity normalization:
-        # If it looks like specific humidity q (< 0.2), convert to RH using pressure from elevation.
         hum = variables['humidity']
         if np.nanmax(hum) < 0.2:
             T = variables['temperature']
@@ -212,7 +182,6 @@ class BAITSSSAlgorithm:
             pressure = 101.3 * np.power(((293.0 - elev * 0.0065) / 293.0), 5.26)
             # Saturation vapor pressure es (kPa)
             es = 0.611 * np.exp((17.27 * T) / (T + 237.3))
-            # Convert q -> actual vapor pressure e (kPa)
             e = (hum * pressure) / (0.622 + 0.378 * hum)
             rh = np.clip(e / es, 0.01, 1.0)
             variables['humidity'] = rh.astype(np.float32)
@@ -247,51 +216,37 @@ class BAITSSSAlgorithm:
                                   block_height: int, block_width: int) -> Dict[str, np.ndarray]:
         """
         Complete BAITSSS physics with iterative energy balance per block.
-
-        Inputs (arrays, float32, shape (H,W)):
-        - ndvi, lai, soil_awc, soil_fc (fraction), elevation (m), nlcd (code),
-            precipitation (PRISM daily mm/day), temperature (°C), humidity (RH 0–1),
-            wind_speed (m/s), radiation (W/m^2),
-            soil_moisture_surface_prev (fraction), soil_moisture_root_prev (fraction)
-
-        Returns:
-        dict with keys: 'et_hour', 'soil_surface', 'soil_root', 'irrigation',
-                        'precip_hour', 'etsoil_hour', 'etveg_hour', 'fc'
-        where ET terms are in mm/hour.
         """
         C = self.constants
 
-        # Unpack
         soil_awc = variables['soil_awc'].astype(np.float32)
         soil_fc  = variables['soil_fc'].astype(np.float32)
         elevation = variables['elevation'].astype(np.float32)
         nlcd = variables['nlcd'].astype(np.float32)
-        # PRISM daily precip → hourly (assume mm/day repeated per hour otherwise)
         precip_hour = variables['precipitation'].astype(np.float32)
 
         ndvi = variables['ndvi'].astype(np.float32)
         lai  = variables['lai'].astype(np.float32)
-        Tair = variables['temperature'].astype(np.float32)       # °C
-        RH   = np.clip(variables['humidity'], 0.01, 1.0)         # RH 0–1
+        Tair = variables['temperature'].astype(np.float32)      
+        RH   = np.clip(variables['humidity'], 0.01, 1.0)         
         Uz   = np.maximum(variables['wind_speed'], 0.1).astype(np.float32)
         Rsw  = np.maximum(variables['radiation'], 0.0).astype(np.float32)
 
         sm_prev = np.clip(variables['soil_moisture_surface_prev'], 0.01, 0.6).astype(np.float32)
         rz_prev = np.clip(variables['soil_moisture_root_prev'],    0.01, 0.6).astype(np.float32)
 
-        # Derived constants/terms
         TairK = Tair + 273.15
         # Pressure (kPa) as function of elevation (m)
         P = 101.3 * np.power(((293.0 - elevation * 0.0065) / 293.0), 5.26)  # kPa
         psych = 0.000665 * P  # kPa/°C
-        # Air density ρ (kg/m^3): P in kPa → Pa
+        # Air density ρ (kg/m^3)
         rho_air = (P * 1000.0) / (287.0 * TairK)
 
         # Saturation/actual vapor pressure (kPa)
         es = 0.611 * np.exp((17.27 * Tair) / (Tair + 237.3))
         ea = RH * es
 
-        # Incoming longwave (simple Brutsaert-like emissivity)
+        # Incoming longwave 
         emis_atm = 1.0 - 0.261 * np.exp(-0.000777 * (Tair ** 2))
         Rlw_in = (TairK ** 4) * C.Stefan_Boltzamn * emis_atm  # W/m^2
 
@@ -304,8 +259,7 @@ class BAITSSSAlgorithm:
         d  = 1.1 * hc * np.log(1.0 + np.power(0.2 * np.maximum(lai, 1e-6), 0.25))
         zom = 0.018 * np.maximum(lai, 1e-6)
 
-        # Aerodynamic resistance rah (neutral approx, guarded logs)
-        # Avoid invalid logs / division
+        # Aerodynamic resistance rah 
         z_w = np.maximum(C.z_b_wind - d, 0.5)
         z_a = np.maximum(C.z_b_air - d, 0.2)
         zom_safe = np.maximum(zom, 1e-4)
@@ -317,7 +271,7 @@ class BAITSSSAlgorithm:
 
         # Boundary layer & canopy resistances
         rac = C.rb / (2.0 * np.maximum(lai / np.maximum(fc, 1e-3), 1e-3))
-        # Bare vs. full veg soil aerodynamic resistance term (simplified guards)
+        # Bare vs. full veg soil aerodynamic resistance term 
         ras_full = np.clip(hc * np.exp(2.5) / (0.41 * 0.41 * np.maximum(Uz, 0.1) * np.maximum(hc - d, 0.05)), 1.0, C.rl_max)
         ras_bare = np.clip((np.log(np.maximum(C.z_b_wind / C.Zos, 1.01)) *
                             np.log(np.maximum((d + zom_safe) / C.Zos, 1.01))) /
@@ -342,9 +296,7 @@ class BAITSSSAlgorithm:
         sm = sm_prev.copy()
         rz = rz_prev.copy()
 
-        # Iterative energy balance (5 iters is a good compromise)
         for _ in range(5):
-            # --- Soil component ---
             # Soil surface resistance (dryness control)
             rss = np.clip(3.5 * np.power(C.Theta_sat / np.maximum(sm, 0.01), 2.3) + 33.5, 35.0, C.rl_max)
 
@@ -371,8 +323,6 @@ class BAITSSSAlgorithm:
             es_veg = 0.611 * np.exp((17.27 * (Tc - 273.15)) / ((Tc - 273.15) + 237.3))
             vpd = np.maximum(es_veg - ea, 0.0)
 
-            # Jarvis-type stomatal resistance factors
-            # Light
             f_light = (40.0 / C.rl_max + 0.55 * (Rsw / C.Rgl) * (2.0 / np.maximum(lai, 1e-3))) / \
                     (1.0 + 0.55 * (Rsw / C.Rgl) * (2.0 / np.maximum(lai, 1e-3)))
             # Temperature
@@ -395,7 +345,6 @@ class BAITSSSAlgorithm:
             etveg_sec_avg = (ETveg_sec_prev + etveg_sec) * 0.5
 
             # --- Radiation / flux partitioning ---
-            # Outgoing LW
             Rlw_out_soil = (Ts ** 4) * C.Emiss_soil * C.Stefan_Boltzamn
             Rlw_out_veg  = (Tc ** 4) * C.BB_Emissi  * C.Stefan_Boltzamn
             # Net radiation (soil & veg)
@@ -416,22 +365,20 @@ class BAITSSSAlgorithm:
             H_soil = np.clip(Rn_soil - G_soil - LE_soil, C.shlo, C.shhi)
             H_veg  = np.clip(Rn_veg  - LE_veg,           C.shlo, C.shhi)
 
-            # Smooth updates
             G_soil_prev = 0.5 * (G_soil_prev + G_soil)
             H_soil_prev = 0.5 * (H_soil_prev + H_soil)
             H_veg_prev  = 0.5 * (H_veg_prev  + H_veg)
             ETsoil_sec_prev = etsoil_sec_avg
             ETveg_sec_prev  = etveg_sec_avg
 
-            # Update soil moisture states (simple bucket)
-            # Convert ET (m/s) → mm/hour using *3600; divide by depths (mm) to get fraction
-            etsoil_h_mm = etsoil_sec_avg * 3600.0 * (1.0 - fc)  # mm/h on soil portion
-            etveg_h_mm  = etveg_sec_avg  * 3600.0 * fc          # mm/h on canopy portion
+            # Update soil moisture states 
+            etsoil_h_mm = etsoil_sec_avg * 3600.0 * (1.0 - fc)  
+            etveg_h_mm  = etveg_sec_avg  * 3600.0 * fc         
 
-            # Surface layer: depletion by soil evaporation (no infiltration routing here; precip to root below)
+            # Surface layer:
             sm = np.clip(sm - (etsoil_h_mm / (C.soil_depth)), 0.01, theta_ref)
 
-            # Root zone: add precip (mm/h) minus total ET (mm/h) over both components
+            # Root zone: 
             rz = np.clip(rz + ((precip_hour - (etsoil_h_mm + etveg_h_mm)) / C.droot),
                         0.01, theta_ref)
 
@@ -445,7 +392,6 @@ class BAITSSSAlgorithm:
         etveg_hour  = etveg_sec_avg  * 3600.0 * fc
         et_total_hour = np.clip(etsoil_hour + etveg_hour, 0.0, 50.0).astype(np.float32)
 
-        # Guard NaNs/Infs
         def _finite(a, fill=0.0):
             a = np.where(np.isfinite(a), a, fill).astype(np.float32)
             return a
@@ -486,7 +432,6 @@ def safe_band_extraction(band_array: np.ndarray, index: int, default_value: floa
 
 def pad_array_to_length(input_array: np.ndarray, expected_length: int, 
                        default_value: float = 0.0) -> np.ndarray:
-    """Pad array to expected length with default values"""
     if len(input_array) >= expected_length:
         return input_array
     else:
@@ -495,7 +440,6 @@ def pad_array_to_length(input_array: np.ndarray, expected_length: int,
 
 
 def validate_baitsss_inputs(ndvi: float, lai: float, tair_oc: float) -> bool:
-    """Validate critical BAITSSS input parameters"""
     return (not np.isnan(tair_oc) and -50 < tair_oc < 60 and
             not np.isnan(ndvi) and -1 <= ndvi <= 1 and
             not np.isnan(lai) and lai >= 0)

@@ -9,19 +9,14 @@ import requests
 from datetime import datetime, timedelta
 from abc import ABC, abstractmethod
 from typing import Optional, Dict
-
-# Landsat-specific imports
 from pystac_client import Client
 import planetary_computer
 import rasterio
 from shapely.geometry import shape, mapping
-
-# NLDAS-specific imports
 import numpy as np
 import xarray as xr
 from rasterio.transform import from_bounds
 from netrc import netrc
-
 from .config import RawDataConfig
 
 class BaseFetcher(ABC):
@@ -32,20 +27,11 @@ class BaseFetcher(ABC):
         pass
 
 class LandsatFetcher(BaseFetcher):
-    """
-    Fetch raw Landsat data (Bands 4 and 5), full scenes (no clipping).
-    Server-only nearest-date search:
-      • Try exact date on server and download ALL intersecting scenes.
-      • If exact date has no scenes, search ±N days on the server (tie → newer) and
-        download ALL intersecting scenes for the chosen nearest date.
-    """
-
     def fetch_data(self, date_from: str, date_to: str, geometry_json: str = None) -> bool:
         try:
             print("Fetching raw Landsat data (full scenes, no clipping)...")
             RawDataConfig.ensure_directories()
 
-            # AOI (optional server-side intersects)
             aoi_geom = None
             if geometry_json:
                 try:
@@ -66,14 +52,14 @@ class LandsatFetcher(BaseFetcher):
             while cur <= end:
                 date_str = cur.isoformat()
 
-                # 1) Exact date on server → download ALL intersecting scenes
+                # Exact date on server -> download ALL intersecting scenes
                 items = self._search_server_for_date(catalog, date_str, aoi_geom)
                 print(f"{date_str}: Found {len(items)} Landsat scenes on server")
 
                 if items:
                     self._download_all_from_items(items, date_str)
                 else:
-                    # 2) Nearest-date on server (±window, tie → newer) → download ALL for that date
+                    # Nearest-date on server (±window, tie -> newer) -> download ALL for that date
                     used_date = self._fetch_nearest_on_server(
                         catalog=catalog,
                         target_date=cur,
@@ -81,22 +67,22 @@ class LandsatFetcher(BaseFetcher):
                         window_days=nearest_window
                     )
                     if used_date:
-                        print(f"   ℹ️ Using nearest server date {used_date} for requested {date_str}")
+                        print(f"   Using nearest server date {used_date} for requested {date_str}")
                     else:
-                        print(f"   ✗ No server scenes within ±{nearest_window} days of {date_str}")
+                        print(f"   No server scenes within ±{nearest_window} days of {date_str}")
 
                 cur += timedelta(days=1)
 
-            print("✓ Landsat data collection completed")
+            print(" Landsat data collection completed")
             return True
 
         except Exception as e:
-            print(f"✗ Error in Landsat collection: {e}")
+            print(f" Error in Landsat collection: {e}")
             return False
 
-    # ---------- helpers (server search & download) ----------
+    # Server search & download
     def _search_server_for_date(self, catalog, date_string: str, aoi_geom) -> list:
-        """Query the server for a single day window, optionally constrained by AOI."""
+        """Query the server for a single day window"""
         time_window = f"{date_string}T00:00:00Z/{date_string}T23:59:59Z"
         params = {
             "collections": [RawDataConfig.LANDSAT_COLLECTION],
@@ -130,36 +116,32 @@ class LandsatFetcher(BaseFetcher):
         Order: +1, -1, +2, -2, ... (tie → newer).
         When found, download ALL intersecting scenes for that date. Return the used date.
         """
-        # Favor newer in a tie by checking +d before -d
         for d in range(1, window_days + 1):
-            # +d (newer)
             plus_date = (target_date + timedelta(days=d)).isoformat()
             items = self._search_server_for_date(catalog, plus_date, area_of_interest)
             if items:
-                print(f"   ✅ Nearest server date chosen: {plus_date} (offset +{d} days)")
+                print(f"   Nearest server date chosen: {plus_date} (offset +{d} days)")
                 self._download_all_from_items(items, plus_date)
                 return plus_date
 
-            # -d (older)
             minus_date = (target_date - timedelta(days=d)).isoformat()
             items = self._search_server_for_date(catalog, minus_date, area_of_interest)
             if items:
-                print(f"   ✅ Nearest server date chosen: {minus_date} (offset -{d} days)")
+                print(f"   Nearest server date chosen: {minus_date} (offset -{d} days)")
                 self._download_all_from_items(items, minus_date)
                 return minus_date
 
         return None
 
-    # ---------- existing local helpers ----------
     def _download_band(self, item, asset_key: str, band_name: str, scene_id: str, date_string: str, output_dir: str):
-        """Download individual band (STRICT date-aware filename)."""
+        """Download individual band"""
         try:
             os.makedirs(output_dir, exist_ok=True)
             filename = f"{band_name}_{scene_id}_{date_string}.tif"
             output_path = os.path.join(output_dir, filename)
 
             if os.path.exists(output_path):
-                print(f"  ⚠ {filename} already exists, skipping")
+                print(f"   {filename} already exists, skipping")
                 return
 
             asset_href = planetary_computer.sign_url(item.assets[asset_key].href)
@@ -172,20 +154,13 @@ class LandsatFetcher(BaseFetcher):
                     dst.write(full_data)
                 os.replace(tmp_path, output_path)
 
-                print(f"  ✓ Saved raw {band_name} (full scene): {filename}")
+                print(f"   Saved raw {band_name} (full scene): {filename}")
                 print(f"    Shape: {src.width} x {src.height}, CRS: {src.crs}")
         except Exception as e:
-            print(f"  ✗ Error downloading {band_name} for {scene_id}: {e}")
+            print(f"   Error downloading {band_name} for {scene_id}: {e}")
 
 class PRISMFetcher(BaseFetcher):
-    """
-    Fetch raw PRISM daily climate data
-    """
-    
     def fetch_data(self, date_from: str, date_to: str, geometry_json: str = None) -> bool:
-        """
-        Collect raw PRISM daily climate data
-        """
         try:
             print("Fetching raw PRISM data...")
             RawDataConfig.ensure_directories()
@@ -204,30 +179,29 @@ class PRISMFetcher(BaseFetcher):
                     output_path = os.path.join(date_folder, f"prism_{variable}_{year_month_day}.tif")
                     
                     if os.path.exists(output_path):
-                        print(f"  ⚠ {variable} already exists, skipping")
+                        print(f"   {variable} already exists, skipping")
                         continue
                     
                     url = f"{RawDataConfig.PRISM_BASE_URL}/{variable}/{year_month_day}"
                     
                     try:
                         self._download_prism_variable(url, output_path, variable, year_month_day)
-                        print(f"  ✓ Saved raw PRISM {variable} for {year_month_day}")
+                        print(f"   Saved raw PRISM {variable} for {year_month_day}")
                         
                     except Exception as e:
-                        print(f"  ✗ Error downloading PRISM {variable} for {year_month_day}: {e}")
+                        print(f"   Error downloading PRISM {variable} for {year_month_day}: {e}")
                         continue
                 
                 current_date += timedelta(days=1)
             
-            print(f"✓ PRISM data collection completed")
+            print(f" PRISM data collection completed")
             return True
             
         except Exception as e:
-            print(f"✗ Error in PRISM collection: {e}")
+            print(f" Error in PRISM collection: {e}")
             return False
     
     def _download_prism_variable(self, url: str, output_path: str, variable: str, date_str: str):
-        """Download individual PRISM variable"""
         response = requests.get(url, stream=True, timeout=RawDataConfig.DOWNLOAD_TIMEOUT)
         response.raise_for_status()
         
@@ -250,18 +224,10 @@ class PRISMFetcher(BaseFetcher):
             shutil.copy2(temp_file, output_path)
 
 class NLDASFetcher(BaseFetcher):
-    """
-    Fetch raw NLDAS-2 FORA hourly data
-    """
-    
     def __init__(self):
         self.session = None
     
     def fetch_data(self, date_from: str, date_to: str, geometry_json: str = None) -> bool:
-        """
-        Fetch raw NLDAS-2 FORA hourly data
-        Layout: ETmap_data/NLDAS_{YYYY}_Geotiff/YYYY-MM-DD/NLDAS_FORA_YYYYMMDD_HH00.tif
-        """
         try:
             print("Fetching raw NLDAS data...")
             
@@ -270,7 +236,6 @@ class NLDASFetcher(BaseFetcher):
             
             print(f"Date range: {start.date()} → {end.date()} (inclusive)")
             
-            # Initialize session
             self.session = self._earthdata_session()
             
             dt = start
@@ -300,9 +265,9 @@ class NLDASFetcher(BaseFetcher):
                         with xr.open_dataset(nc_path, engine="netcdf4") as ds:
                             stack, transform, ny, nx = self._extract_arrays(ds)
                         self._write_geotiff(out_path, stack, transform, ny, nx)
-                        print(f"  ✓ {ts.strftime('%H:00')} → {out_name}")
+                        print(f"   {ts.strftime('%H:00')} → {out_name}")
                     except Exception as e:
-                        print(f"  ✗ FAILED {ts.strftime('%H:00')} — {e}")
+                        print(f"   FAILED {ts.strftime('%H:00')} — {e}")
                     finally:
                         if 'nc_path' in locals() and os.path.exists(nc_path):
                             try:
@@ -315,15 +280,14 @@ class NLDASFetcher(BaseFetcher):
                 
                 dt += timedelta(days=1)
             
-            print(f"✓ NLDAS data collection completed")
+            print(f" NLDAS data collection completed")
             return True
             
         except Exception as e:
-            print(f"✗ Error in NLDAS collection: {e}")
+            print(f" Error in NLDAS collection: {e}")
             return False
     
     def _nldas_hourly_https_url(self, dt: datetime) -> str:
-        """GES DISC direct HTTPS path uses year + day-of-year"""
         doy = dt.timetuple().tm_yday
         return (
             f"{RawDataConfig.NLDAS_BASE_URL}/"
@@ -375,7 +339,6 @@ class NLDASFetcher(BaseFetcher):
         raise RuntimeError(f"Failed to download {url}: {last_err}")
     
     def _extract_arrays(self, ds):
-        """Extract data arrays"""
         if "time" in getattr(ds, "dims", {}) and getattr(ds, "sizes", {}).get("time", 1) == 1:
             ds = ds.isel(time=0)
 
