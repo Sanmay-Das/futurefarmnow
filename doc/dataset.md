@@ -1,11 +1,13 @@
 # FutureFarmNow Dataset Documentation
 ## Initial Setup
 ### Configure Base Paths
-Update your base paths in **etmap_modules/config.py** to point to your futurefarmnow project directory
+All paths are centralized in **etmap_modules/config.py**. By default they resolve relative to the repository root **REPO_ROOT**. If you deploy under a different root, adjust only here:
 ```
-DATA_BASE_PATH = "/path/to/your/futurefarmnow/wsgi/ETmap_data"
-RESULTS_BASE_PATH = "/path/to/your/futurefarmnow/wsgi/results"
+DB_PATH        = os.path.join(REPO_ROOT, "etmap.db")
+ETMAP_DATA_DIR = os.path.join(REPO_ROOT, "etmap_data")
+RESULTS_DIR    = os.path.join(REPO_ROOT, "results")
 ```
+*Note*: **raw_data_modules/RawDataConfig** delegates to **ETMapConfig** —configure paths only once in etmap_modules/config.py.
 
 ## NLDAS
 1. Login to https://urs.earthdata.nasa.gov/home
@@ -32,7 +34,7 @@ export NETRC=$HOME/.netrc
 
 ### Folder Structure
 ```
-ETmap_data/LF2020_Elev_220_CONUS/Tif/LC20_Elev_220.tif
+etmap_data/LF2020_Elev_220_CONUS/Tif/LC20_Elev_220.tif
 ```
 
 
@@ -41,16 +43,16 @@ Go to https://www.sciencebase.gov/catalog/item/6810c1a4d4be022940554075 and down
 
 ### Folder Structure
 ```
-ETmap_data/NLCD/Annual_NLCD_LndCov_{YEAR}_CU_C1V1/Annual_NLCD_LndCov_{YEAR}_CU_C1V1.tif
+etmap_data/NLCD/Annual_NLCD_LndCov_{YEAR}_CU_C1V1/Annual_NLCD_LndCov_{YEAR}_CU_C1V1.tif
 ```
 ### Examples
 #### For 2019
 ```
-ETmap_data/NLCD/Annual_NLCD_LndCov_2019_CU_C1V1/Annual_NLCD_LndCov_2019_CU_C1V1.tif
+etmap_data/NLCD/Annual_NLCD_LndCov_2019_CU_C1V1/Annual_NLCD_LndCov_2019_CU_C1V1.tif
 ```
 #### For 2024
 ```
-ETmap_data/NLCD/Annual_NLCD_LndCov_2024_CU_C1V1/Annual_NLCD_LndCov_2024_CU_C1V1.tif
+etmap_data/NLCD/Annual_NLCD_LndCov_2024_CU_C1V1/Annual_NLCD_LndCov_2024_CU_C1V1.tif
 ```
 ### Configuration Update after downloading
 1. Open **etmap_modules/config.py**
@@ -62,7 +64,7 @@ If you download 2023 NLCD data:
 
 #### Extract to
 ```
-ETmap_data/NLCD/Annual_NLCD_LndCov_2023_CU_C1V1/Annual_NLCD_LndCov_2023_CU_C1V1.tif
+etmap_data/NLCD/Annual_NLCD_LndCov_2023_CU_C1V1/Annual_NLCD_LndCov_2023_CU_C1V1.tif
 ```
 #### Update config
 ```
@@ -76,6 +78,6 @@ AVAILABLE_NLCD_YEARS = [2019, 2024, 2023]
 2. Navigate to **Attached Files** and download **awc_gNATSGO.zip** and **fc_gNATSGO.zip**
 ### Folder Structure
 ```
-ETmap/Soil_Data/awc_gNATSGO_US.tif
-ETmap/Soil_Data/fc_gNATSGO_US.tif
+etmap_data/Soil_Data/awc_gNATSGO_US.tif
+etmap_data/Soil_Data/fc_gNATSGO_US.tif
 ```
