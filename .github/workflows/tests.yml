@@ -35,4 +35,5 @@ jobs:
     
     - name: Run tests
       run: |
+        export PYTHONPATH=$PYTHONPATH:$(pwd)/wsgi
         pytest wsgi/tests/ -v --cov=wsgi/raw_data_modules --cov=wsgi/etmap_modules
