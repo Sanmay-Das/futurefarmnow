@@ -3,8 +3,9 @@ import threading
 from .config import RawDataConfig
 
 class RawDataDatabase:
-    def __init__(self):
-        self.db_path = RawDataConfig.DB_PATH
+    def __init__(self, db_path=None):
+        # Use the provided path (for tests) or fallback to config default (for app)
+        self.db_path = db_path if db_path else RawDataConfig.DB_PATH
         self._local = threading.local()
         self._initialize_db()
     
