@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./wsgi:/app/wsgi
+    environment:
+      - FLASK_ENV=1
+      - PYTHONPATH=/app
+    restart: unless-stopped

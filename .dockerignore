@@ -1,0 +1,54 @@
+# SYSTEM & GIT
+.git
+.gitignore
+.github
+.vscode
+.DS_Store
+.idea
+.metals
+.netrc
+
+# HEAVY DATA 
+**/landsat8_sr
+**/sentinel2_output
+**/ssurgo_data
+**/prism_data
+**/etmap_data
+**/data
+**/results
+**/soil2023
+**/soil_properties
+**/raw_data
+
+# BACKUPS & ZIP FILES
+**/old_code
+**/Correct_working_code
+**/New_working_correct_code
+**/final_code_correct
+**/untitled folder
+*.zip
+*.csv
+*.png
+*.jpg
+*.tif
+*.tiff
+*.nc
+*.db
+*.dbf
+*.gpkg
+*.tar.gz
+
+# PYTHON & CACHE
+__pycache__
+*.pyc
+.pytest_cache
+**/ffnenv
+**/ffnenv3.11
+**/venv
+**/env
+
+# OTHER LANGUAGES
+**/node_modules
+**/target
+**/build
+**/dist
